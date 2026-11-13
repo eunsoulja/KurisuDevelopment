@@ -152,17 +152,19 @@ function main(guild) {
     // Two columns: the eye compares state across the row, not down a list.
     `${E.clearShield} **Antinuke**\n-# ${g.antinuke_enabled ? verdict.icon : E.smallRedDot} ${g.antinuke_enabled ? 'On' : 'Off'}`,
     `${raidIcon} **Raid**\n-# ${raidState}`,
-    `${E.modernStaff} **Whitelist**\n-# ${whitelisted} ${whitelisted === 1 ? 'entry' : 'entries'}`,
-    `${E.banHammer} **Incidents**\n-# ${incidents} logged`,
+    // verifiedDeveloper marks trusted entries; bugHunter marks detections, so the
+    // two ban-hammers stay available for the punishment-oriented safeguards.
+    `${E.verifiedDeveloper} **Whitelist**\n-# ${whitelisted} ${whitelisted === 1 ? 'entry' : 'entries'}`,
+    `${E.bugHunter} **Incidents**\n-# ${incidents} logged`,
     'sep:blank',
     // Safeguards: label, then a short status. One line each, no fake alignment.
     `${E.modernRules} **Nuke Guard**  ·  ${armed}\n` +
     `-# ${guard.enabled ? `${PUNISHMENT_LABEL[guard.punishment]} on ${guard.threshold} actions / ${guard.window_sec}s` : 'Cross-module bursts are not watched'}`,
-    `${E.banHammerAlt} **Nuke Watch**  ·  ${watcherText}\n` +
-    `${E.timeoutClock} **Last Incident**  ·  ${lastText}`,
+    `${E.banHammer} **Nuke Watch**  ·  ${watcherText}\n` +
+    `${E.banHammerAlt} **Last Incident**  ·  ${lastText}`,
     'sep',
-    ui.buttons(ui.btn('ks:v:prot:0', `${E.clearShield} Protection`), ui.btn('ks:v:wl:trusted_mod', `${E.modernStaff} Whitelist`)),
-    ui.buttons(ui.btn('ks:v:logs:0', `${E.banHammer} Logs`), ui.btn('ks:v:set', `${E.modernRules} Settings`)),
+    ui.buttons(ui.btn('ks:v:prot:0', `${E.clearShield} Protection`), ui.btn('ks:v:wl:trusted_mod', `${E.verifiedDeveloper} Whitelist`)),
+    ui.buttons(ui.btn('ks:v:logs:0', `${E.bugHunter} Logs`), ui.btn('ks:v:set', `${E.modernRules} Settings`)),
     ui.buttons(ui.btn('ks:v:diag', `${E.modernVerify} Diagnostics`)),
   ];
 }

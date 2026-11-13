@@ -576,6 +576,27 @@ test('UI: security center leads with one verdict, not repeated status lines', ()
   assert.match(mainText('gm1'), /\*\*Antinuke is off\*\* - this server is unprotected/, 'off is the loudest state');
 });
 
+test('UI: dashboard copy uses only registry emoji, never Unicode emoji', () => {
+  // Any emoji in a card must be a <:name:id> custom emoji from config/emojis.js.
+  // Discord's Unicode emoji live in astral planes (U+1F000+), dingbats (U+2700-27BF),
+  // misc symbols/arrows (U+2190-23FF), regional flags and variation selectors.
+  const UNICODE_EMOJI = /[\u2190-\u21FF\u2300-\u23FF\u2460-\u24FF\u25A0-\u27BF\u2B00-\u2BFF\uFE0F\u200D]|[\u{1F000}-\u{1FAFF}]/u;
+  const g = mainOf('gemo');
+  const views = ['main', 'set', 'raid', 'prot:0', 'wl:trusted_mod', 'diag', 'logs:0'].map((r) => dashboard.route(g, r));
+  for (const items of views) {
+    const nodes = walk(ui.edit(items).components[0].toJSON());
+    for (const n of nodes) {
+      const texts = [n.content, n.label, n.placeholder, n.description].filter((t) => typeof t === 'string');
+      for (const t of texts) assert.ok(!UNICODE_EMOJI.test(t), `Unicode emoji in: ${t}`);
+    }
+    // Every custom emoji mentioned must exist in the registry.
+    const raw = JSON.stringify(nodes);
+    for (const m of raw.matchAll(/<(a?):(\w+):(\d+)>/g)) {
+      assert.ok(Object.values(EMOJIS).includes(m[0]), `emoji ${m[2]} is not in the registry`);
+    }
+  }
+});
+
 test('UI: security center navigation is a full grid with no lone button', () => {
   const rows = dashboard.main(mainOf('gm2'))
     .filter((x) => x && typeof x.toJSON === 'function')
