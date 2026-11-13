@@ -70,7 +70,7 @@ const chatInput = (over = {}) => ({
   ...over,
 });
 
-test('database: migrations are idempotent and config survives a restart', () => {
+test('database: migrations are idempotent and config survives a restart', async () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kurisu-')), 'persist.db');
   const Database = require('better-sqlite3');
   // open the real module against a file, write, close, reopen
@@ -443,7 +443,7 @@ test('text commands: khelp and kping reply publicly with V2 payloads', async () 
 });
 
 test('commands: all required slash commands exist', () => {
-  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo'];
+  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo', 'dev'];
   for (const r of required) assert.ok(commands.has(r), `missing /${r}`);
   const wl = commands.get('whitelist').data.toJSON().options.map((o) => o.name).sort();
   assert.deepEqual(wl, ['add', 'check', 'list', 'remove']);
@@ -1116,4 +1116,58 @@ test('authorization: diagnostics re-checks access on the interaction', async () 
   const mine = dashInteraction({ customId: 'ks:v:diag', guild: diagGuild(), member: wlOwner, user: wlOwner });
   await dashboard.handle(mine);
   assert.match(plainText(mine.calls.updated), /DIAGNOSTICS/);
+});
+
+test('dev: renders a V2 public team card with all IDs, labels and no embeds', async () => {
+  const cmd = commands.get('dev');
+  assert.ok(cmd, 'dev command missing');
+  const payload = await cmd.execute({ reply: async (p) => p });
+  const json = JSON.stringify(payload);
+  assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2, 'IsComponentsV2 flag');
+  assert.equal(Number(payload.flags) & MessageFlags.Ephemeral, 0, 'must be public');
+  for (const id of ['1521890728094208122', '1124369205727330346', '1441623190412726355', '1530686788824469646']) {
+    assert.ok(json.includes(`<@${id}>`), `missing mention for ${id}`);
+  }
+  for (const label of ['DEVELOPERS', 'Owner', 'Moderators']) assert.ok(json.includes(label), `missing label ${label}`);
+  assert.ok(!json.includes('"embeds"'));
+  assert.deepEqual(payload.allowedMentions, { parse: [], repliedUser: false });
+  const nodes = walk(payload.components[0].toJSON());
+  assert.equal(nodes.filter((n) => n.type === 2).length, 0, 'card should have no buttons');
+});
+
+test('dev: works through the text command path', async () => {
+  const { guild, addMember } = fakeGuild({ id: 'gdev', ownerId: 'owner' });
+  const member = addMember('owner');
+  member.permissions = { has: () => true };
+  const client = { commands, users: { cache: new Map(), fetch: async () => null } };
+  guild.client = client;
+  const sent = [];
+  const message = {
+    guild, member, client, content: '!dev',
+    author: { id: 'owner', bot: false, tag: 'owner#0001', username: 'owner' },
+    channel: { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }) },
+    reply: async (payload) => { sent.push(payload); return { edit: async () => {} }; },
+  };
+  text.clearPrefix(guild.id);
+  assert.equal(await text.handle(message, client), true);
+  assert.equal(sent.length, 1);
+  const json = JSON.stringify(sent[0]);
+  assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
+  assert.equal(Number(sent[0].flags) & MessageFlags.Ephemeral, 0);
+  assert.ok(json.includes('<@1521890728094208122>'));
+  assert.deepEqual(sent[0].allowedMentions, { parse: [], repliedUser: false });
+});
+
+test('help: includes dev under Utility with no buttons and correct counts', () => {
+  assert.equal(commands.size, 39, 'top-level command count');
+  const entries = help.collect(commands);
+  assert.equal(entries.length, 54, 'help entry count');
+  const dev = entries.find((e) => e.key === 'dev');
+  assert.ok(dev, 'dev missing from help');
+  assert.equal(dev.category, 'utility');
+  assert.match(dev.label, /\/dev/);
+  const view = help.detailView('1', entries, 'dev', 'utility', 0);
+  const nodes = walk(ui.edit(view).components[0].toJSON());
+  const buttons = nodes.filter((n) => n.type === 2);
+  assert.ok(buttons.every((b) => b.style === 2), 'detail view buttons must be secondary');
 });

@@ -81,7 +81,7 @@ async function main(guild) {
       ? { icon: E.timeoutClock, line: '**Lockdown active** - channels are restricted' }
       : off
         ? { icon: E.timeoutClock, line: `${enabled} of ${KEYS.length} modules armed  ·  ${off} off` }
-        : { icon: E.verified, line: `All ${KEYS.length} modules armed` };
+        : { icon: E.shinyVerified, line: `All ${KEYS.length} modules armed` };
 
   const raidState = !g.raid_enabled ? 'Off' : r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Normal' : r.level;
   const raidIcon = r.lockdown_active ? E.timeoutClock : E.modernRaid;
@@ -293,7 +293,7 @@ async function raidView(guild) {
   const level = { NORMAL: 'Normal', ELEVATED: 'Elevated', HIGH: 'High', LOCKDOWN: 'Lockdown' }[c.level] || c.level;
   return [
     `### ${E.modernRaid} RAID PROTECTION`,
-    `${c.lockdown_active ? E.timeoutClock : E.verified} ${c.lockdown_active ? '**Lockdown active**' : `Level **${level}**`}  ·  verification **${c.verification_active ? 'on' : 'off'}**`,
+    `${c.lockdown_active ? E.timeoutClock : E.shinyVerified} ${c.lockdown_active ? '**Lockdown active**' : `Level **${level}**`}  -  verification **${c.verification_active ? 'on' : 'off'}**`,
     'sep',
     `**Join Thresholds**  ·  ${c.window_sec}s window\n` +
     `-# Elevated  **${c.elevated_joins}**   ·   High  **${c.high_joins}**   ·   Lockdown  **${c.lockdown_joins}**\n` +

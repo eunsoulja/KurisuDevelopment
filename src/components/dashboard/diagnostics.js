@@ -13,7 +13,7 @@ const { E } = ui;
 const ok = (label, value) => ({ level: 'ok', label, value });
 const warn = (label, value) => ({ level: 'warn', label, value });
 const bad = (label, value) => ({ level: 'bad', label, value });
-const dot = { ok: E.verified, warn: E.timeoutClock, bad: E.redDot };
+const dot = { ok: E.shinyVerified, warn: E.timeoutClock, bad: E.redDot };
 const ALL = BigInt(PB.All);
 
 const REQUIRED = [

@@ -3,9 +3,9 @@
 // Central emoji registry. Static custom emojis, exact `<:name:id>` syntax.
 const EMOJIS = {
   crown: '<:33379crownred:1570097536021037096>',
-  verified: '<:9387verifiedred:1570097533957443646>',
-  administrator: '<:9279administrator:1570097531659092210>',
+  verified: '<:8881shinyredverified:1570097528706441298>',
   shinyVerified: '<:8881shinyredverified:1570097528706441298>',
+  administrator: '<:9279administrator:1570097531659092210>',
   shinyLink: '<:8747shinyredlink:1570097526965805177>',
   ping: '<a:ping:1570354510721843280>',
   banHammer: '<:8465banhammer:1570097524541493258>',
@@ -24,6 +24,7 @@ const EMOJIS = {
 
   admin: '<:4631adminred:1570097494560342176>',
   ownerBadge: '<:4396ownerbadgered:1570097491452366960>',
+  modBadge: '<:4730modernmoderator:1570097497232117850>',
   verifiedDeveloper: '<:3963verifieddeveloperbadgered:1570097489044832377>',
   timeoutClock: '<:3769timeoutclock:1570097486595498036>',
   mod2: '<:3219mod2:1570097484448010342>',

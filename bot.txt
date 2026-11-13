@@ -40,9 +40,9 @@ Main areas:
   - Prefix text commands using the same permission and V2 response pipeline.
 
 Current scale:
-  - 38 top-level slash commands.
+  - 39 top-level slash commands.
   - 24 subcommands.
-  - 53 help entries (top-level commands + subcommands).
+  - 54 help entries (top-level commands + subcommands).
   - 28 antinuke modules.
   - 50 automated tests, all passing.
 
@@ -358,7 +358,7 @@ Categories below match the /help categories.
 
 
 --------------------------------------------------------------------------------
-4.7 UTILITY (7 commands)
+4.7 UTILITY (8 commands)
 --------------------------------------------------------------------------------
 
 /about
@@ -381,6 +381,9 @@ Categories below match the /help categories.
 
 /userinfo [user]
   Show account, role and security details. Default: yourself.
+
+/dev
+  Show the Kurisu developer team. No options. Public, no permission checks, no database access.
 
 /guilds [page]
   Bot owner only. Every server the bot is in, with member and approximate
@@ -561,7 +564,7 @@ Commands:
   src/commands/moderation/  ban, kick, timeout, purge, role, massban, etc.
   src/commands/configuration/ logs, prefix.
   src/commands/administration/ whitelist.
-  src/commands/utility/     help, guilds, about, invite, ping, userinfo,
+  src/commands/utility/     help, guilds, about, dev, invite, ping, userinfo,
                             serverinfo.
 
 Text commands:
@@ -616,6 +619,7 @@ Config:
                             levels, log types, limits.
   src/config/whitelist.js   Scope presets, masks and labels.
   src/config/emojis.js      Red custom emoji registry.
+  src/config/developers.js  Developer team display data (owner, moderators).
   src/config/branding.js    Branding URLs.
 
 Database (current SQLite; MongoDB migration planned):
@@ -1086,11 +1090,11 @@ Before saying a change is done:
 12. QUICK REFERENCE - COUNTS
 ================================================================================
 
-Top-level commands : 38
+Top-level commands : 39
 Subcommands        : 24
-Help entries       : 53
+Help entries       : 54
 Antinuke modules   : 28
-Tests              : 38 passing
+Tests              : 50 passing
 UI                 : Components V2, grey buttons, red emojis only
 Default prefix     : !
 Database           : SQLite now (./data/kurisu.db); MongoDB Atlas planned

@@ -16,7 +16,7 @@ Red custom emojis are the only colour: no accent bars, grey (secondary) buttons 
 | Command Center | `/help` generated from the real command definitions, category pages, detail pages, pagination, branded media |
 | Logs | antinuke, raid, moderation, member, message, channel, role, voice, configuration |
 | Recovery | channel and role restore, role/channel/server-name revert, webhook removal, unapproved bot removal, invite cleanup |
-| Extra commands | `/raid status\|lockdown\|unlock`, `/verification enable\|disable\|status`, `/quarantine release`, `/logs set\|clear\|view`, `/antinuke status\|enable\|disable`, `/incidents`, `/watchlist list\|add\|remove`, `/guilds` (bot owner, paginated + refresh), `/prefix`, `/userinfo`, `/about`, `/invite`, `/ping`, `/serverinfo` |
+| Extra commands | `/raid status\|lockdown\|unlock`, `/verification enable\|disable\|status`, `/quarantine release`, `/logs set\|clear\|view`, `/antinuke status\|enable\|disable`, `/incidents`, `/watchlist list\|add\|remove`, `/guilds` (bot owner, paginated + refresh), `/prefix`, `/userinfo`, `/about`, `/dev`, `/invite`, `/ping`, `/serverinfo` |
 | Text commands | Per-server prefix (default `!`), e.g. `!help`, `!ping`, `!serverinfo`, `!ban @member spam`; same permission checks and V2 views as slash commands |
 | Mention card | Mentioning Kurisu replies with a branded Components V2 card (GIF + live bot stats + emoji invite button); 15s per-user cooldown |
 | Presence | The bot's status is `Watching <n> users`, refreshed every two minutes from the real member count |
