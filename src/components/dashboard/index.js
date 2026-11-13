@@ -92,6 +92,12 @@ function entryList(guild, limit) {
 // ---------------------------------------------------------------- views
 const PROT_PAGE = 10;
 
+/**
+ * Security Center main card.
+ * Layout: one verdict, then glanceable stats, then the two live safeguards.
+ * Every line carries a different fact - no repeated "Active" filler - and the
+ * navigation is a clean 2x2 grid plus a full-width Diagnostics row.
+ */
 function main(guild) {
   const g = repo.getGuild(guild.id);
   const r = repo.getRaid(guild.id);
@@ -99,16 +105,40 @@ function main(guild) {
   const enabled = mods.filter((m) => m.enabled).length;
   const guard = repo.getModule(guild.id, 'nukeGuard', MODULES);
   const last = repo.lastIncident(guild.id);
-  const raidStatus = !g.raid_enabled ? 'Off' : r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Active' : r.level;
+  const watchers = repo.countNukeWatch(guild.id);
+  const incidents = repo.countIncidents(guild.id);
+  const whitelisted = repo.countWhitelist(guild.id);
+  const off = mods.filter((m) => !m.enabled).length;
+
+  // One verdict instead of three identical "Active" lines. Antinuke being off is
+  // the only state that makes the whole card insecure; anything else is a warning.
+  const verdict = !g.antinuke_enabled
+    ? { icon: E.redDot, line: '**Antinuke is off** - this server is unprotected' }
+    : r.lockdown_active
+      ? { icon: E.timeoutClock, line: '**Lockdown active** - channels are restricted' }
+      : off
+        ? { icon: E.timeoutClock, line: `${enabled} of ${KEYS.length} modules armed  ·  ${off} off` }
+        : { icon: E.verified, line: `All ${KEYS.length} modules armed` };
+
+  // Raid always shows its real state; "On" alone would hide an active lockdown.
+  const raidState = !g.raid_enabled ? 'Off' : r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Normal' : r.level;
+  const guardLine = guard.enabled
+    ? `${PUNISHMENT_LABEL[guard.punishment]} after **${guard.threshold}** actions in **${guard.window_sec}s**`
+    : 'Disabled';
+
   return [
     `### ${E.clearShield} KURISU SECURITY CENTER`,
-    '-# Protection overview',
+    `${verdict.icon} ${verdict.line}`,
     'sep',
-    `${E.clearShield} **Antinuke**  ·  ${g.antinuke_enabled ? 'Active' : 'Off'}\n${E.modernRaid} **Raid Protection**  ·  ${raidStatus}\n${E.modernRules} **Security Rules**  ·  ${enabled ? 'Active' : 'Off'}`,
+    // Glanceable counts: each number is the thing you would actually look for.
+    `${E.clearShield} Antinuke  ·  ${g.antinuke_enabled ? '**On**' : '**Off**'}\n` +
+    `${E.modernRaid} Raid  ·  **${raidState}**\n` +
+    `${E.modernStaff} Whitelist  ·  **${whitelisted}**\n` +
+    `${E.banHammer} Incidents  ·  **${incidents}**`,
     'sep',
-    `**Overview**\nProtection Modules  **${enabled} / ${KEYS.length}**\nWhitelist Entries  **${repo.countWhitelist(guild.id)}**\nSecurity Incidents  **${repo.countIncidents(guild.id)}**`,
-    'sep',
-    `**Nuke Guard**  ·  ${guard.enabled ? 'Armed' : 'Off'}\n-# ${guard.enabled ? `${PUNISHMENT_LABEL[guard.punishment]} after ${guard.threshold} destructive actions in ${guard.window_sec}s` : 'Cross-module burst detection is disabled'}\n**Nuke Watch**  ·  **${repo.countNukeWatch(guild.id)}**\n**Last Incident**  ·  ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None'}`,
+    `**Nuke Guard**\n-# ${guardLine}\n` +
+    `**Nuke Watch**  ·  **${watchers}** ${watchers === 1 ? 'executor' : 'executors'}\n` +
+    `**Last Incident**  ·  ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None yet'}`,
     'sep',
     ui.buttons(ui.btn('ks:v:prot:0', 'Protection'), ui.btn('ks:v:wl:trusted_mod', 'Whitelist')),
     ui.buttons(ui.btn('ks:v:logs:0', 'Security Logs'), ui.btn('ks:v:set', 'Settings')),
@@ -122,7 +152,9 @@ function protection(guild, page = 0) {
   const pages = Math.max(1, Math.ceil(mods.length / PROT_PAGE));
   const p = Math.min(Math.max(0, page), pages - 1);
   const slice = mods.slice(p * PROT_PAGE, (p + 1) * PROT_PAGE);
-  const lines = slice.map((m) => `${m.enabled ? E.redDot : E.smallRedDot} ${MODULES[m.module].name}  ·  ${PUNISHMENT_LABEL[m.punishment]}`);
+  // name -> punishment, dot = armed. Disabled modules drop to a muted dot so a
+  // wall of red does not read as "everything active".
+  const lines = slice.map((m) => `${m.enabled ? E.redDot : E.smallRedDot} ${MODULES[m.module].name}  ·  \`${PUNISHMENT_LABEL[m.punishment]}\``);
   const options = slice.map((m) => ({
     label: MODULES[m.module].name,
     value: m.module,
@@ -135,7 +167,7 @@ function protection(guild, page = 0) {
   ] : [];
   return [
     `### ${E.clearShield} PROTECTION MODULES`,
-    `-# ${enabled} of ${KEYS.length} enabled  ·  page ${p + 1}/${pages}`,
+    `-# **${enabled}** armed  ·  **${KEYS.length - enabled}** off  ·  page ${p + 1}/${pages}`,
     'sep',
     lines.length ? lines.join('\n') : 'No protection modules.',
     'sep',
@@ -282,36 +314,50 @@ function settings(guild, logType) {
     `### ${E.modernRules} SETTINGS`,
     '-# Protection, escalation and logging',
     'sep',
-    '**Protection**',
+    // Each section carries its own heading so the card reads as three groups.
     { section: `${E.clearShield} **Antinuke**\n-# ${on(g.antinuke_enabled)}`, button: ui.btn('ks:master:antinuke', g.antinuke_enabled ? 'Disable' : 'Enable') },
     { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', g.raid_enabled ? 'Disable' : 'Enable') },
     'sep',
-    `**Escalation**  ·  ${g.escalation_threshold ? `ban after **${g.escalation_threshold}** incidents in 24h` : 'off'}\n**Prefix**  ·  **${g.prefix || '!'}**`,
+    `**Escalation**  ·  ${g.escalation_threshold ? `auto-ban after **${g.escalation_threshold}** incidents in 24h` : 'Off'}\n**Prefix**  ·  \`${g.prefix || '!'}\``,
     'sep',
-    `**Log Channels**  ·  ${set.length} / ${entries.length} configured\n${lines}${unsetLine}`,
+    `**Log Channels**  ·  **${set.length}/${entries.length}** configured\n${lines}${unsetLine}`,
     'sep',
     ui.select('ks:lt', 'Choose a log type', Object.entries(LOG_TYPES).map(([value, label]) => ({ label, value, default: value === logType }))),
   ];
-  if (logType && LOG_TYPES[logType]) items.push(ui.channelSelect(`ks:lc:${logType}`, `Channel for ${LOG_TYPES[logType]} logs`), ui.buttons(ui.btn(`ks:lclr:${logType}`, 'Clear Channel')));
-  items.push(ui.buttons(ui.btn('ks:esc', 'Escalation'), ui.btn('ks:v:raid', 'Raid'), ui.btn('ks:v:diag', 'Diagnostics'), ui.btn('ks:v:main', 'Back')));
+  // A selected type gets one channel picker; "Clear" joins the footer row instead
+  // of sitting alone, which used to add two extra rows to this card.
+  const hasType = logType && LOG_TYPES[logType];
+  if (hasType) items.push(ui.channelSelect(`ks:lc:${logType}`, `Channel for ${LOG_TYPES[logType]} logs`));
+  // "Back" always closes the card, so it never shares a row with a setting. The
+  // optional Clear Channel goes with the type picker; the rest split 2 + 2.
+  const footer = [
+    ...(hasType ? [ui.btn(`ks:lclr:${logType}`, 'Clear Channel')] : []),
+    ui.btn('ks:esc', 'Escalation'), ui.btn('ks:v:raid', 'Raid'), ui.btn('ks:v:diag', 'Diagnostics'),
+  ];
+  const perRow = Math.ceil(footer.length / 2);
+  items.push(ui.buttons(...footer.slice(0, hasType ? 2 : perRow)));
+  items.push(ui.buttons(...footer.slice(hasType ? 2 : perRow), ui.btn('ks:v:main', 'Back')));
   return items;
 }
 
 function raidView(guild) {
   const c = repo.getRaid(guild.id);
+  const level = { NORMAL: 'Normal', ELEVATED: 'Elevated', HIGH: 'High', LOCKDOWN: 'Lockdown' }[c.level] || c.level;
   return [
     `### ${E.modernRaid} RAID PROTECTION`,
-    '-# Join-velocity detection and lockdown',
+    `${c.lockdown_active ? E.timeoutClock : E.verified} ${c.lockdown_active ? '**Lockdown active**' : `Level **${level}**`}  ·  verification **${c.verification_active ? 'on' : 'off'}**`,
     'sep',
-    `**Status**\nLevel  **${c.level}**\nLockdown  **${c.lockdown_active ? 'Active' : 'Off'}**\nVerification  **${c.verification_active ? 'On' : 'Off'}**`,
+    // Thresholds read as a ladder: the number is what you tune, the text is the effect.
+    `**Join Thresholds**  ·  ${c.window_sec}s window\n` +
+    `-# Elevated  **${c.elevated_joins}**   ·   High  **${c.high_joins}**   ·   Lockdown  **${c.lockdown_joins}**\n` +
+    `-# High raises verification. Lockdown is ${c.auto_lockdown ? `automatic for ${c.lockdown_minutes}m` : 'manual only'}.`,
     'sep',
-    `**Join Thresholds**  ·  window ${c.window_sec}s\nElevated  **${c.elevated_joins}**\nHigh  **${c.high_joins}**  ·  raises verification\nLockdown  **${c.lockdown_joins}**  ·  ${c.auto_lockdown ? `auto, ${c.lockdown_minutes}m` : 'manual only'}`,
+    `**Accounts**  ·  minimum age **${c.min_account_age_days ? `${c.min_account_age_days} days` : 'none'}**  ·  kick in lockdown **${c.kick_suspicious ? 'yes' : 'no'}**`,
     'sep',
-    `**Accounts**\nMinimum age  **${c.min_account_age_days ? `${c.min_account_age_days} days` : 'None'}**\nKick new accounts in lockdown  **${c.kick_suspicious ? 'Yes' : 'No'}**`,
-    'sep',
+    // These two are the only immediate actions on this card, so they get their own row.
+    ui.buttons(ui.btn(c.lockdown_active ? 'ks:rlk:off' : 'ks:rlk:on', c.lockdown_active ? 'Unlock Server' : 'Lock Server'),
+      ui.btn(c.verification_active ? 'ks:rvf:off' : 'ks:rvf:on', c.verification_active ? 'Verification Off' : 'Verification On')),
     ui.buttons(ui.btn('ks:rth', 'Thresholds'), ui.btn('ks:rop', 'Options'), ui.btn('ks:v:set', 'Back')),
-    ui.buttons(ui.btn(c.lockdown_active ? 'ks:rlk:off' : 'ks:rlk:on', c.lockdown_active ? 'Unlock' : 'Lockdown'),
-      ui.btn(c.verification_active ? 'ks:rvf:off' : 'ks:rvf:on', c.verification_active ? 'Verify Off' : 'Verify On')),
   ];
 }
 

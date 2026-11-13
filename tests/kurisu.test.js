@@ -538,9 +538,39 @@ test('UI: dashboard shows real database values', () => {
   repo.saveModule('gd', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
   const text = dashboard.main(g).filter((x) => typeof x === 'string').join('\n');
   assert.match(text, /KURISU SECURITY CENTER/);
-  assert.match(text, /Protection Modules\s+\*\*27 \/ 28\*\*/);
-  assert.match(text, /Whitelist Entries\s+\*\*2\*\*/);
-  assert.match(text, /Security Incidents\s+\*\*1\*\*/);
+  assert.match(text, /27 of 28 modules armed\s+·\s+1 off/);
+  assert.match(text, /Whitelist\s+·\s+\*\*2\*\*/);
+  assert.match(text, /Incidents\s+·\s+\*\*1\*\*/);
+});
+
+const mainText = (id) => dashboard.main({ id, ownerId: 'owner', client: { user: { id: 'kurisu' } } })
+  .filter((x) => typeof x === 'string').join('\n');
+
+test('UI: security center leads with one verdict, not repeated status lines', () => {
+  const healthy = mainText('gm1');
+  assert.match(healthy, /All 28 modules armed/, 'all-on is a positive verdict');
+  assert.equal((healthy.match(/\*\*On\*\*/g) || []).length, 1, 'antinuke is stated once');
+  assert.ok(!/Security Rules/.test(healthy), 'the ambiguous "Security Rules" line is gone');
+  assert.ok(!/28 \/ 28/.test(healthy), 'no padded x / x counters');
+  assert.match(healthy, /\*\*Nuke Watch\*\*\s+·\s+\*\*0\*\* executors/);
+  assert.match(healthy, /\*\*Last Incident\*\*\s+·\s+None yet/);
+
+  repo.saveModule('gm1', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
+  assert.match(mainText('gm1'), /27 of 28 modules armed\s+·\s+1 off/, 'partial protection warns');
+
+  repo.setGuild('gm1', 'antinuke_enabled', 0);
+  assert.match(mainText('gm1'), /\*\*Antinuke is off\*\* - this server is unprotected/, 'off is the loudest state');
+});
+
+test('UI: security center navigation is a full grid with no lone button', () => {
+  const rows = dashboard.main({ id: 'gm2', ownerId: 'owner', client: { user: { id: 'kurisu' } } })
+    .filter((x) => x && typeof x.toJSON === 'function')
+    .map((row) => row.toJSON())
+    .filter((row) => row.components?.some((c) => c.type === 2));
+  assert.equal(rows.length, 3, 'three action rows');
+  const labels = rows.map((row) => row.components.map((c) => c.label).join('+'));
+  assert.deepEqual(labels, ['Protection+Whitelist', 'Security Logs+Settings', 'Diagnostics']);
+  for (const row of rows) for (const c of row.components) assert.equal(c.style, 2, 'grey buttons only');
 });
 
 const fakeInteraction = (over = {}) => {
@@ -584,7 +614,7 @@ test('dashboard: settings lists only configured log channels and names the rest'
   repo.ensureGuild('gset');
   repo.setLogChannel('gset', 'antinuke', 'c1');
   const view = dashboard.settings(g).filter((x) => typeof x === 'string').join('\n');
-  assert.match(view, /Log Channels\*\*\s+·\s+1 \/ 9 configured/);
+  assert.match(view, /Log Channels\*\*\s+·\s+\*\*1\/9\*\* configured/);
   assert.match(view, /Antinuke\s+·\s+<#c1>/);
   assert.match(view, /Not set: Raid/);
   repo.setLogChannel('gset', 'antinuke', null);
