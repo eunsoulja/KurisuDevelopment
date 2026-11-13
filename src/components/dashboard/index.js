@@ -21,6 +21,7 @@ function main(guild) {
   const r = repo.getRaid(guild.id);
   const mods = repo.getAllModules(guild.id, MODULES);
   const enabled = mods.filter((m) => m.enabled).length;
+  const guard = repo.getModule(guild.id, 'nukeGuard', MODULES);
   const last = repo.lastIncident(guild.id);
   const status = g.antinuke_enabled ? 'Enabled' : 'Disabled';
   return [
@@ -29,6 +30,7 @@ function main(guild) {
     `${E.clearShield} Antinuke  ·  ${g.antinuke_enabled ? 'Active' : 'Off'}\n${E.modernRaid} Raid Protection  ·  ${g.raid_enabled ? (r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Active' : r.level) : 'Off'}\n${E.modernRules} Security Rules  ·  ${enabled ? 'Active' : 'Off'}`,
     'sep',
     `Protection Modules  **${enabled}/${KEYS.length}**\nWhitelist Entries  **${repo.countWhitelist(guild.id)}**\nSecurity Incidents  **${repo.countIncidents(guild.id)}**`,
+    `Nuke Guard  ·  **${guard.enabled ? `Armed, ${guard.threshold} in ${guard.window_sec}s` : 'Off'}**\nNuke Watch  ·  **${repo.countNukeWatch(guild.id)}**`,
     `Last Incident: ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None'}`,
     'sep',
     ui.buttons(ui.btn('ks:v:prot', 'Protection'), ui.btn('ks:v:wl:trusted_mod', 'Whitelist'), ui.btn('ks:v:logs:0', 'Security Logs'), ui.btn('ks:v:set', 'Settings')),
@@ -38,12 +40,20 @@ function main(guild) {
 function protection(guild) {
   const mods = repo.getAllModules(guild.id, MODULES);
   const lines = mods.map((m) => `${m.enabled ? E.redDot : E.smallRedDot} ${MODULES[m.module].name}  ·  ${PUNISHMENT_LABEL[m.punishment]}`);
+  const options = mods.map((m) => ({ label: MODULES[m.module].name, value: m.module, description: `${on(m.enabled)} · ${m.threshold} in ${m.window_sec}s`, emoji: E.clearShield }));
+  // Discord allows at most 25 options per select. With 28 modules the picker
+  // is split into pages of 25 so every module stays reachable.
+  const pages = Math.max(1, Math.ceil(options.length / 25));
+  const menus = [];
+  for (let n = 0; n < pages; n++) {
+    menus.push(ui.select(`ks:pick:${n}`, pages > 1 ? `Select a module (${n + 1}/${pages})` : 'Select a module', options.slice(n * 25, (n + 1) * 25)));
+  }
   return [
     `### ${E.clearShield} PROTECTION MODULES`,
     '-# Select a module to configure it.',
     lines.join('\n'),
     'sep',
-    ui.select('ks:pick', 'Select a module', mods.map((m) => ({ label: MODULES[m.module].name, value: m.module, description: `${on(m.enabled)} · ${m.threshold} in ${m.window_sec}s`, emoji: E.clearShield }))),
+    ...menus,
     ui.buttons(ui.btn('ks:v:main', 'Back')),
   ];
 }
@@ -72,12 +82,23 @@ function whitelistView(guild, level = 'trusted_mod', mask = 0n) {
     return `${target}  ·  ${WHITELIST_LEVELS[r.level]}  ·  ${scopesLabel(storedScopes(r.scopes))}`;
   }).join('\n') + (rows.length > 10 ? `\n-# +${rows.length - 10} more` : '') : 'No entries. Owners are always exempt.';
   const selected = scopesForMask(mask);
-  const options = scopeOptions().map((o) => ({
-    ...o,
-    default: o.value === 'default' ? mask === 0n
-      : o.value === 'all' ? mask === ALL_MASK
-        : mask !== 0n && mask !== ALL_MASK && !!(mask & (1n << BigInt(KEYS.indexOf(o.value)))),
-  }));
+  const allOptions = scopeOptions();
+  const chunks = [];
+  for (let n = 0; n < allOptions.length; n += 25) chunks.push(allOptions.slice(n, n + 25));
+  const scopeMenus = chunks.map((chunk, n) => {
+    const options = chunk.map((o) => ({
+      ...o,
+      // "All modules" is an action, not a resting state: when every module is
+      // selected it stays unselected so toggling one module off behaves as
+      // expected. A concrete mask is shown by the module options themselves.
+      default: o.value === 'default' ? mask === 0n
+        : o.value === 'all' ? false
+          : mask !== 0n && !!(mask & (1n << BigInt(KEYS.indexOf(o.value)))),
+    }));
+    return ui.select(`ks:wlsc:${level}:${maskId(mask)}:${n}`,
+      chunks.length > 1 ? `Choose exemption scope (${n + 1}/${chunks.length})` : 'Choose exemption scope',
+      options, { min: 1, max: Math.min(25, options.length) });
+  });
   return [
     `### ${E.modernStaff} WHITELIST`,
     list,
@@ -85,7 +106,7 @@ function whitelistView(guild, level = 'trusted_mod', mask = 0n) {
     `-# Level to grant: **${WHITELIST_LEVELS[level]}**`,
     `-# Scope: **${mask === 0n ? 'Level default' : mask === ALL_MASK ? 'All modules' : scopesLabel(selected)}**`,
     ui.select(`ks:wlvl:${maskId(mask)}`, 'Choose level', Object.entries(WHITELIST_LEVELS).map(([value, label]) => ({ label, value, default: value === level }))),
-    ui.select(`ks:wlsc:${level}:${maskId(mask)}`, 'Choose exemption scope', options, { min: 1, max: Math.min(25, options.length) }),
+    ...scopeMenus,
     ui.userSelect(`ks:wladd:${level}:${maskId(mask)}`, 'Add or update a user'),
     ui.roleSelect(`ks:wladdr:${level}:${maskId(mask)}`, 'Add or update a role'),
     ui.userSelect(`ks:wlrm:${level}:${maskId(mask)}`, 'Remove a user'),
@@ -218,14 +239,25 @@ async function handle(i) {
       case 'wlvl': return show(whitelistView(guild, i.values[0], parseMask(arg[0])));
       case 'wlsc': {
         const level = arg[0] || 'trusted_mod';
+        const current = parseMask(arg[1]);
+        const chunk = Number(arg[2]) || 0;
         const values = i.values;
-        let mask = 0n;
-        if (values.includes('all')) mask = ALL_MASK;
-        else if (!(values.length === 1 && values[0] === 'default')) {
-          mask = values.reduce((m, key) => {
-            const idx = KEYS.indexOf(key);
-            return idx === -1 ? m : m | (1n << BigInt(idx));
-          }, 0n);
+        const picked = values.filter((v) => KEYS.includes(v));
+        if (values.includes('all')) return show(whitelistView(guild, level, ALL_MASK));
+        if (!picked.length) return show(whitelistView(guild, level, 0n)); // "Level default"
+
+        // Scope options are split across two selects (25 options each). Replace
+        // only this chunk so choices made in the other select are preserved.
+        const all = scopeOptions();
+        const chunkKeys = all.slice(chunk * 25, (chunk + 1) * 25).map((o) => o.value).filter((v) => v !== 'default' && v !== 'all');
+        let mask = current;
+        for (const key of chunkKeys) {
+          const idx = KEYS.indexOf(key);
+          if (idx !== -1) mask &= ~(1n << BigInt(idx));
+        }
+        for (const value of picked) {
+          const idx = KEYS.indexOf(value);
+          if (idx !== -1) mask |= 1n << BigInt(idx);
         }
         return show(whitelistView(guild, level, mask));
       }
@@ -256,6 +288,11 @@ async function handle(i) {
       case 'master': {
         const col = arg[0] === 'raid' ? 'raid_enabled' : 'antinuke_enabled';
         const cur = repo.getGuild(guild.id)[col];
+        // Turning protection off is a sensitive action: a compromised Trusted
+        // Administrator must not be able to blind the server in one click.
+        if (cur && !perms.isOwnerClass(guild, i.user.id)) {
+          return show(withFeedback(settings(guild), { ok: false, message: 'Only the server owner or a bot owner can disable protection.' }));
+        }
         repo.setGuild(guild.id, col, cur ? 0 : 1);
         await audit(guild, i, `${arg[0] === 'raid' ? 'Raid protection' : 'Antinuke'}: ${cur ? 'disabled' : 'enabled'}`);
         return show(settings(guild));

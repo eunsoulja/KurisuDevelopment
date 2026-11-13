@@ -31,9 +31,13 @@ const LOG_TYPES = {
 
 const LIMITS = {
   massBanMax: 25,
+  massKickMax: 25,
   purgeMax: 100,
   timeoutMaxSec: 28 * 24 * 3600,
   warningsPerPage: 5,
+  incidentsPerPage: 5,
+  bansPerPage: 10,
+  guildsPerPage: 8,
 };
 
 module.exports = {

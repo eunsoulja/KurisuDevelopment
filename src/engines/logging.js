@@ -27,6 +27,15 @@ async function send(guild, type, head, lines) {
   }
 }
 
+const watchLog = (guild, i) => send(guild, 'antinuke', `${E.smallRedDot} SECURITY WATCH`, [
+  `Executor: <@${i.executorId}>`,
+  `Action: ${i.actionLabel}`,
+  `Progress: ${i.count}/${i.threshold}`,
+  `Status: Monitoring - below response threshold`,
+  '',
+  `Time: <t:${Math.floor(Date.now() / 1000)}:R>`,
+]);
+
 const incidentLog = (guild, i) => send(guild, 'antinuke', `${E.banHammer} SECURITY INCIDENT`, [
   `Executor: <@${i.executorId}>`,
   `Action: ${i.actionLabel}`,
@@ -38,4 +47,4 @@ const incidentLog = (guild, i) => send(guild, 'antinuke', `${E.banHammer} SECURI
   `Time: <t:${Math.floor(Date.now() / 1000)}:R>`,
 ]);
 
-module.exports = { send, incidentLog };
+module.exports = { send, watchLog, incidentLog };

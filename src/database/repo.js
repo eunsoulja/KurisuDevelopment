@@ -105,6 +105,15 @@ function addCase(guildId, { userId, moderatorId, action, reason, durationSec }) 
 function userCases(guildId, userId, limit = 10) {
   return get().prepare('SELECT * FROM mod_cases WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, userId, limit);
 }
+function getCase(guildId, caseNumber) {
+  return get().prepare('SELECT * FROM mod_cases WHERE guild_id = ? AND case_number = ?').get(guildId, caseNumber);
+}
+function countUserCases(guildId, userId) {
+  return get().prepare('SELECT COUNT(*) c FROM mod_cases WHERE guild_id = ? AND user_id = ?').get(guildId, userId).c;
+}
+function pageUserCases(guildId, userId, limit, offset) {
+  return get().prepare('SELECT * FROM mod_cases WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(guildId, userId, limit, offset);
+}
 function addWarning(guildId, userId, moderatorId, reason) {
   const info = get().prepare('INSERT INTO warnings (guild_id, user_id, moderator_id, reason, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(guildId, userId, moderatorId, reason || null, now());
@@ -123,6 +132,9 @@ function addIncident(guildId, i) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(guildId, i.executorId, i.module, i.action, i.count, i.threshold, i.response, i.status, i.details || null, now()).lastInsertRowid;
 }
 function countIncidents(guildId) { return get().prepare('SELECT COUNT(*) c FROM incidents WHERE guild_id = ?').get(guildId).c; }
+function countIncidentsSince(guildId, since) {
+  return get().prepare('SELECT COUNT(*) c FROM incidents WHERE guild_id = ? AND created_at >= ?').get(guildId, since).c;
+}
 function lastIncident(guildId) { return get().prepare('SELECT * FROM incidents WHERE guild_id = ? ORDER BY created_at DESC LIMIT 1').get(guildId); }
 function pageIncidents(guildId, limit, offset) {
   return get().prepare('SELECT * FROM incidents WHERE guild_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(guildId, limit, offset);
@@ -164,6 +176,32 @@ function addRecovery(guildId, kind, targetId, result, details) {
     .run(guildId, kind, targetId || null, result, details || null, now());
 }
 
+// ---------- nuke watch ----------
+function addNukeWatch(guildId, userId, reason, expiresAt) {
+  get().prepare(`INSERT INTO nuke_watch (guild_id, user_id, reason, created_at, expires_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET reason = excluded.reason, created_at = excluded.created_at, expires_at = excluded.expires_at`)
+    .run(guildId, userId, reason || null, now(), expiresAt);
+}
+function getNukeWatch(guildId, userId, nowMs = Date.now()) {
+  const row = get().prepare('SELECT * FROM nuke_watch WHERE guild_id = ? AND user_id = ?').get(guildId, userId);
+  if (!row) return null;
+  if (row.expires_at <= nowMs) { removeNukeWatch(guildId, userId); return null; }
+  return row;
+}
+function listNukeWatch(guildId, nowMs = Date.now()) {
+  get().prepare('DELETE FROM nuke_watch WHERE guild_id = ? AND expires_at <= ?').run(guildId, nowMs);
+  return get().prepare('SELECT * FROM nuke_watch WHERE guild_id = ? ORDER BY expires_at DESC').all(guildId);
+}
+function countNukeWatch(guildId, nowMs = Date.now()) {
+  return get().prepare('SELECT COUNT(*) c FROM nuke_watch WHERE guild_id = ? AND expires_at > ?').get(guildId, nowMs).c;
+}
+function removeNukeWatch(guildId, userId) {
+  return get().prepare('DELETE FROM nuke_watch WHERE guild_id = ? AND user_id = ?').run(guildId, userId).changes > 0;
+}
+function pruneNukeWatch(nowMs = Date.now()) {
+  get().prepare('DELETE FROM nuke_watch WHERE expires_at <= ?').run(nowMs);
+}
+
 // ---------- quarantine ----------
 function saveQuarantine(guildId, userId, roles) {
   get().prepare('INSERT OR REPLACE INTO quarantine (guild_id, user_id, roles, created_at) VALUES (?, ?, ?, ?)').run(guildId, userId, JSON.stringify(roles), now());
@@ -177,7 +215,9 @@ function clearQuarantine(guildId, userId) { get().prepare('DELETE FROM quarantin
 module.exports = {
   ensureGuild, getGuild, setGuild, getModule, getAllModules, saveModule, getRaid, setRaid, getLockedChannels, saveLockedChannel,
   clearLockedChannels, activeLockdowns, addJoin, countJoins, recentJoins, pruneJoins, getWhitelist, listWhitelist, roleWhitelist, countWhitelist,
-  addWhitelist, removeWhitelist, addCase, userCases, addWarning, countWarnings, pageWarnings, addIncident, countIncidents,
+  addWhitelist, removeWhitelist, addCase, userCases, getCase, countUserCases, pageUserCases,
+  addWarning, countWarnings, pageWarnings, addIncident, countIncidents, countIncidentsSince,
   lastIncident, pageIncidents, countExecutorIncidents, recentIncidentSince, getLogChannel, allLogChannels, setLogChannel,
   saveSnapshot, getSnapshot, listSnapshots, deleteSnapshot, addRecovery, saveQuarantine, getQuarantine, clearQuarantine,
+  addNukeWatch, getNukeWatch, listNukeWatch, countNukeWatch, removeNukeWatch, pruneNukeWatch,
 };

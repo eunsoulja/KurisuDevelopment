@@ -16,7 +16,7 @@ const antinuke = require('../src/engines/antinuke');
 const { MODULES, KEYS } = require('../src/engines/antinuke/modules');
 const raid = require('../src/engines/raid');
 const { EMOJIS, parseEmoji } = require('../src/config/emojis');
-const { maskForScopes, maskId, parseScopes, scopesForMask } = require('../src/config/whitelist');
+const { ALL_MASK, maskForScopes, maskId, parseScopes, scopesForMask } = require('../src/config/whitelist');
 const helpers = require('../src/utils/helpers');
 const ui = require('../src/components/common/ui');
 const help = require('../src/components/help');
@@ -39,7 +39,7 @@ test('database: migrations are idempotent and config survives a restart', () => 
   assert.equal(m.threshold, 7); assert.equal(m.enabled, 0); assert.equal(m.punishment, 'kick');
   assert.equal(repo.getWhitelist('gA', 'u1').level, 'bypass');
   assert.equal(repo.getRaid('gA').high_joins, 42);
-  assert.equal(new Database(file).prepare('SELECT COUNT(*) c FROM schema_migrations').get().c, 3);
+  assert.equal(new Database(file).prepare('SELECT COUNT(*) c FROM schema_migrations').get().c, 4);
   db.close();
   db.open(':memory:');
 });
@@ -57,9 +57,10 @@ test('emoji registry: every entry has exact <:name:id> syntax', () => {
   assert.ok(Object.keys(EMOJIS).length >= 30);
 });
 
-test('modules: 23 protection modules, each with defaults', () => {
-  assert.equal(KEYS.length, 23);
+test('modules: 28 protection modules, each with defaults', () => {
+  assert.equal(KEYS.length, 28);
   for (const k of KEYS) { const d = MODULES[k].defaults; assert.ok(d.threshold > 0 && d.windowSec > 0 && d.punishment, k); }
+  for (const k of ['nukeGuard', 'massUnban', 'threadDelete', 'assetCreate', 'automodRule']) assert.ok(MODULES[k], `missing ${k}`);
 });
 
 test('permissions: exemption rules', () => {
@@ -140,20 +141,20 @@ test('permissions: moderation hierarchy', () => {
 
 const entry = (id, action, executorId, extra = {}) => ({ id, action, executorId, targetId: `t${id}`, changes: [], ...extra });
 
-test('antinuke: threshold, punishment, incident record, dedupe', async () => {
-  const { guild, banned, addMember } = fakeGuild();
+test('antinuke: threshold, fast kick, incident record, dedupe', async () => {
+  const { guild, kicked, addMember } = fakeGuild();
   addMember('attacker', { position: 3 });
   repo.ensureGuild('g1');
   await antinuke.handleAuditEntry(entry('e1', AuditLogEvent.ChannelDelete, 'attacker'), guild);
-  assert.equal(banned.length, 0, 'below threshold: no punishment');
+  assert.equal(kicked.length, 0, 'below threshold: no punishment');
   await antinuke.handleAuditEntry(entry('e1', AuditLogEvent.ChannelDelete, 'attacker'), guild); // duplicate id
-  assert.equal(banned.length, 0, 'duplicate event ignored');
+  assert.equal(kicked.length, 0, 'duplicate event ignored');
   await antinuke.handleAuditEntry(entry('e2', AuditLogEvent.ChannelDelete, 'attacker'), guild);
-  assert.deepEqual(banned, ['attacker']);
+  assert.deepEqual(kicked, ['attacker']);
   const inc = repo.lastIncident('g1');
-  assert.equal(inc.module, 'channelDelete'); assert.equal(inc.count, 2); assert.equal(inc.threshold, 2); assert.equal(inc.response, 'Banned');
+  assert.equal(inc.module, 'channelDelete'); assert.equal(inc.count, 2); assert.equal(inc.threshold, 2); assert.equal(inc.response, 'Kicked');
   await antinuke.handleAuditEntry(entry('e3', AuditLogEvent.ChannelDelete, 'attacker'), guild);
-  assert.equal(banned.length, 1, 'no repeat punishment inside the lock window');
+  assert.equal(kicked.length, 1, 'no repeat punishment inside the lock window');
   assert.equal(repo.countIncidents('g1'), 1);
 });
 
@@ -174,6 +175,30 @@ test('antinuke: disabled modules do nothing', async () => {
   repo.saveModule('g1', 'massKick', { ...repo.getModule('g1', 'massKick', MODULES), enabled: false });
   for (let n = 0; n < 5; n++) await antinuke.handleAuditEntry(entry(`mk${n}`, AuditLogEvent.MemberKick, 'someone'), guild);
   assert.equal(banned.length, 0);
+});
+
+test('antinuke: nuke guard kicks a mixed burst and bans on rejoin', async () => {
+  const { guild, kicked, banned, addMember } = fakeGuild({ id: 'gnuke' });
+  addMember('nuker', { position: 3 });
+  repo.ensureGuild('gnuke');
+
+  await antinuke.handleAuditEntry(entry('n1', AuditLogEvent.MemberKick, 'nuker'), guild);
+  await antinuke.handleAuditEntry(entry('n2', AuditLogEvent.MemberBanAdd, 'nuker'), guild);
+  assert.equal(kicked.length, 0, 'two actions stay below the guard');
+  await antinuke.handleAuditEntry(entry('n3', AuditLogEvent.MemberBanRemove, 'nuker'), guild);
+  assert.deepEqual(kicked, ['nuker'], 'third destructive action triggers an immediate kick');
+
+  const inc = repo.lastIncident('gnuke');
+  assert.equal(inc.module, 'nukeGuard');
+  assert.equal(inc.response, 'Kicked');
+  assert.equal(inc.count, 3);
+  assert.ok(repo.getNukeWatch('gnuke', 'nuker'), 'kicked nuke executor is watched');
+
+  const rejoined = addMember('nuker');
+  rejoined.guild = guild;
+  assert.equal(await antinuke.handleJoin(rejoined), true);
+  assert.ok(banned.includes('nuker'), 'watched executor is banned on rejoin');
+  assert.equal(repo.getNukeWatch('gnuke', 'nuker'), null);
 });
 
 test('antinuke: sliding window drops old actions', () => {
@@ -347,12 +372,39 @@ test('text commands: khelp and kping reply publicly with V2 payloads', async () 
 });
 
 test('commands: all required slash commands exist', () => {
-  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'whitelist', 'security', 'prefix', 'help', 'ping', 'serverinfo'];
+  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo'];
   for (const r of required) assert.ok(commands.has(r), `missing /${r}`);
   const wl = commands.get('whitelist').data.toJSON().options.map((o) => o.name).sort();
   assert.deepEqual(wl, ['add', 'check', 'list', 'remove']);
   const role = commands.get('role').data.toJSON().options.map((o) => o.name).sort();
   assert.deepEqual(role, ['add', 'remove']);
+  const antinukeSubs = commands.get('antinuke').data.toJSON().options.map((o) => o.name).sort();
+  assert.deepEqual(antinukeSubs, ['disable', 'enable', 'status']);
+  const caseSubs = commands.get('case').data.toJSON().options.map((o) => o.name).sort();
+  assert.deepEqual(caseSubs, ['user', 'view']);
+  const watchSubs = commands.get('watchlist').data.toJSON().options.map((o) => o.name).sort();
+  assert.deepEqual(watchSubs, ['add', 'list', 'remove']);
+});
+
+test('guilds: owner-only network overview with totals and per-server counts', async () => {
+  const cmd = commands.get('guilds');
+  const rows = [
+    { id: '111111111111111111', name: 'Alpha', members: 1200, active: 80 },
+    { id: '222222222222222222', name: 'Beta', members: 300, active: 12 },
+  ];
+  const text = cmd.render({ at: Date.now(), rows, totals: { servers: 2, members: 1500, active: 92 } }, 0, 'botowner')
+    .filter((x) => typeof x === 'string').join('\n');
+  assert.match(text, /KURISU NETWORK/);
+  assert.match(text, /Servers\s+\*\*2\*\*/);
+  assert.match(text, /Active Users\s+\*\*92\*\*/);
+  assert.match(text, /Total Members\s+\*\*1,500\*\*/);
+  assert.match(text, /Alpha/);
+  assert.match(text, /1,200 members/);
+
+  const denied = fakeInteraction({ customId: 'guilds', user: { id: 'rando' } });
+  await cmd.execute(denied);
+  assert.ok(denied.calls.replied);
+  assert.ok(JSON.stringify(denied.calls.replied).includes('Only the bot owner'));
 });
 
 test('help: generated from real command definitions, covers every command', () => {
@@ -393,7 +445,7 @@ test('UI: dashboard shows real database values', () => {
   repo.saveModule('gd', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
   const text = dashboard.main(g).filter((x) => typeof x === 'string').join('\n');
   assert.match(text, /KURISU SECURITY CENTER/);
-  assert.match(text, /Protection Modules\s+\*\*22\/23\*\*/);
+  assert.match(text, /Protection Modules\s+\*\*27\/28\*\*/);
   assert.match(text, /Whitelist Entries\s+\*\*2\*\*/);
   assert.match(text, /Security Incidents\s+\*\*1\*\*/);
 });
@@ -458,6 +510,24 @@ test('authorization: scoped role whitelist via dashboard', async () => {
   assert.equal(repo.getWhitelist('gw', 'roleDash'), undefined);
 });
 
+test('dashboard: whitelist scope chunks preserve the other chunk', async () => {
+  const owner = { id: 'owner', permissions: { has: () => true } };
+  const gw = { id: 'gw2', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
+  const base = fakeInteraction({ member: owner, user: owner, guild: gw });
+
+  // From "all modules", narrowing the second chunk must keep the first chunk selected.
+  const kept = KEYS.slice(0, 23).concat('threadDelete');
+  const narrowed = { ...base, customId: `ks:wlsc:trusted_mod:${maskId(ALL_MASK)}:1`, values: ['threadDelete'] };
+  await dashboard.handle(narrowed);
+  assert.ok(narrowed.calls.updated);
+  assert.ok(JSON.stringify(narrowed.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(kept))}`));
+
+  // A pre-selected "Level default" must not override module picks in the same submit.
+  const withDefault = { ...base, customId: `ks:wlsc:trusted_mod:${maskId(0n)}:0`, values: ['default', 'channelCreate'] };
+  await dashboard.handle(withDefault);
+  assert.ok(JSON.stringify(withDefault.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(['channelCreate']))}`));
+});
+
 test('authorization: help menu belongs to the user who opened it', async () => {
   const client = { commands };
   const other = fakeInteraction({ customId: 'kh:111:main', user: { id: '222' }, client });
@@ -471,8 +541,10 @@ test('authorization: help menu belongs to the user who opened it', async () => {
 test('UI: every view fits Discord Components V2 limits', () => {
   const entries = help.collect(commands);
   const g = { id: 'gl', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
+  const guildRows = Array.from({ length: 10 }, (_, n) => ({ id: `${n}`.padStart(18, '0'), name: `Guild ${n}`, members: 1000 - n, active: n }));
   const views = [help.mainView('1'), ...Object.keys(help.CATEGORIES).flatMap((c) => [0, 1].map((p) => help.categoryView('1', entries, c, p))),
-    ...['main', 'prot', 'wl:bypass', 'logs:0', 'set', 'set:antinuke', 'raid'].map((r) => dashboard.route(g, r))];
+    ...['main', 'prot', 'wl:bypass', 'logs:0', 'set', 'set:antinuke', 'raid'].map((r) => dashboard.route(g, r)),
+    commands.get('guilds').render({ at: Date.now(), rows: guildRows, totals: { servers: 10, members: 9955, active: 45 } }, 0, '1')];
   for (const v of views) {
     const nodes = walk(ui.edit(v).components[0].toJSON());
     assert.ok(nodes.filter((x) => typeof x.type === 'number' && x.type <= 20).length <= 40, 'max 40 components');

@@ -7,15 +7,16 @@ Red custom emojis are the only colour: no accent bars, grey (secondary) buttons 
 
 | Area | Details |
 |---|---|
-| Antinuke | 23 modules, each with enable/disable, threshold, time window, punishment, incident log, persistent config |
+| Antinuke | 28 modules, each with enable/disable, threshold, time window, punishment, incident log, persistent config |
+| Nuke Guard | Cross-module burst detection, instant kick, 24h ban-on-sight watch, early security-watch alerts, real-time audit-log gateway feed |
 | Raid protection | NORMAL / ELEVATED / HIGH / LOCKDOWN, join velocity, account age, auto and manual lockdown with expiry, verification mode, join history |
 | Whitelist | Users **and roles**, with per-entry scopes: pings/mentions, channel create/delete/rename, role changes, member actions, webhooks, bots, server settings, all modules; trusted_admin, trusted_mod, bypass, trusted bot; owner protections cannot be removed |
-| Moderation | `/ban /unban /kick /timeout /untimeout /warn /warnings /purge /clear /slowmode /lock /unlock /hide /unhide /nickname /role add|remove /softban /massban` |
+| Moderation | `/ban /unban /kick /timeout /untimeout /warn /warnings /purge /clear /slowmode /lock /unlock /hide /unhide /nickname /role add\|remove /softban /massban /masskick /case view\|user /banlist` |
 | Security Center | `/security` dashboard, fully interactive (modules, thresholds, punishments, whitelist, logs, raid, log channels) |
 | Command Center | `/help` generated from the real command definitions, category pages, detail pages, pagination, branded media |
 | Logs | antinuke, raid, moderation, member, message, channel, role, voice, configuration |
 | Recovery | channel and role restore, role/channel/server-name revert, webhook removal, unapproved bot removal, invite cleanup |
-| Extra commands | `/raid status|lockdown|unlock`, `/verification enable|disable|status`, `/quarantine release`, `/logs set|clear|view`, `/prefix`, `/about`, `/invite`, `/ping`, `/serverinfo` |
+| Extra commands | `/raid status\|lockdown\|unlock`, `/verification enable\|disable\|status`, `/quarantine release`, `/logs set\|clear\|view`, `/antinuke status\|enable\|disable`, `/incidents`, `/watchlist list\|add\|remove`, `/guilds` (bot owner), `/prefix`, `/userinfo`, `/about`, `/invite`, `/ping`, `/serverinfo` |
 | Text commands | Per-server prefix (default `!`), e.g. `khelp`, `kping`, `kserverinfo`, `kban @member spam`; same permission checks and V2 views as slash commands |
 | Mention card | Mentioning Kurisu replies with a branded Components V2 card (GIF + live bot stats + emoji invite button); 15s per-user cooldown |
 | Presence | The bot's status is `Watching <n> users`, refreshed every two minutes from the real member count |
@@ -42,7 +43,7 @@ Whitelist entries can target a **user or a role** and can be limited to specific
 /whitelist add level:Trusted Bot user:@logger-bot
 ```
 
-`scopes` accepts comma-separated module keys (`channelCreate`, `channelUpdate`, `everyoneMention`, ...), friendly presets (`pings`, `channels`, `roles`, `members`, `webhooks`, `server`, `emojis`, `bots`, `permissions`), `all`, or `default`. The Security Center whitelist page exposes the same scopes as a multi-select.
+`scopes` accepts comma-separated module keys (`channelCreate`, `channelUpdate`, `everyoneMention`, ...), friendly presets (`pings`, `channels`, `roles`, `members`, `webhooks`, `server`, `emojis`, `assets`, `threads`, `automod`, `bots`, `permissions`, `nuke`), `all`, or `default`. The Security Center whitelist page exposes the same scopes as a multi-select.
 
 ## Text commands
 
@@ -130,11 +131,15 @@ Kurisu consumes `GUILD_AUDIT_LOG_ENTRY_CREATE`. Each entry already carries the e
 2. No executor on the entry: ignored. Kurisu never punishes an arbitrary member.
 3. The entry is mapped to one or more modules.
 4. Exempt actors (guild owner, bot owner, Kurisu, whitelist) are skipped. Administrator permission alone gives no immunity.
-5. A per-executor sliding window counts actions; at the threshold a per-executor lock prevents double punishment during a flood.
-6. Punishment is applied, with a fallback chain if Discord refuses (ban, kick, quarantine, timeout). A repeat offender within 24 hours escalates to ban (configurable, 0 = off). Bot accounts are banned.
-7. Everything in the burst is mitigated (restore, revert or remove) and an incident row plus a short log is written.
+5. **Nuke Guard** counts destructive actions across modules per executor before any per-module threshold. At the guard threshold the executor is kicked immediately, so a mixed burst (delete channel + delete role + ban wave) cannot stay under every individual threshold.
+6. A per-executor sliding window counts actions per module; at the threshold a per-executor lock prevents double punishment during a flood.
+7. Punishment is applied, with a fallback chain if Discord refuses (ban, kick, quarantine, timeout). A repeat offender within 24 hours escalates to ban (configurable, 0 = off). Bot accounts are banned.
+8. A kicked executor goes on a **24 hour nuke watch**. Any auditable action or rejoin is an immediate ban, so a kick cannot be undone with an invite.
+9. Everything in the burst is mitigated (restore, revert or remove) and an incident row plus a short log is written.
 
-Message-based modules (@everyone, mass mention) run from `messageCreate`.
+Critical modules (channel/role deletion, unapproved bots, permission escalation, automod tampering, vanity changes and similar) default to a first- or second-hit **kick**. The first hit on a destructive module also writes a "Security Watch" line to the antinuke log while it is still below threshold.
+
+Message-based modules (@everyone, mass mention) run from `messageCreate`; the nuke watch is checked there too.
 
 ## Known limits (Discord API)
 
@@ -154,7 +159,7 @@ Message-based modules (@everyone, mass mention) run from `messageCreate`.
 npm test
 ```
 
-Automated: persistence across a restart, guild isolation, whitelist and hierarchy rules, antinuke thresholds/dedupe/exemptions, audit classification, raid levels, help generation from real commands, Components V2 limits, grey-buttons-only, no accent colour, and authorization on dashboard and help interactions.
+Automated: persistence across a restart, guild isolation, whitelist and hierarchy rules, antinuke thresholds/dedupe/exemptions, fast kick response, nuke-guard bursts and ban-on-sight watch, audit classification, raid levels, help generation from real commands, Components V2 limits, grey-buttons-only, no accent colour, and authorization on dashboard and help interactions.
 
 **Not automated, run these on a disposable test server before production:** every slash command against live Discord, gateway reconnects, real audit-log delivery, emoji rendering, lockdown/unlock on a server with many channels, channel and role restoration, and bot hierarchy edge cases. Never run destructive tests on a real community.
 

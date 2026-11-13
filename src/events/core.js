@@ -11,6 +11,9 @@ const dashboard = require('../components/dashboard');
 const confirm = require('../components/common/confirm');
 const invite = require('../components/common/invite');
 const warnings = require('../commands/moderation/warnings');
+const incidents = require('../commands/security/incidents');
+const banlist = require('../commands/moderation/banlist');
+const guilds = require('../commands/utility/guilds');
 const mentions = require('./mentions');
 const text = require('../text');
 const { deployCommands } = require('../utils/deploy');
@@ -67,7 +70,10 @@ async function safeReply(interaction, line) {
   }
 }
 
-const ROUTES = { kh: help.handle, ks: dashboard.handle, kc: confirm.handle, kw: warnings.component, ki: invite.handle };
+const ROUTES = {
+  kh: help.handle, ks: dashboard.handle, kc: confirm.handle, kw: warnings.component,
+  ki: invite.handle, kn: incidents.component, kb: banlist.component, kg: guilds.component,
+};
 
 module.exports = [
   {
@@ -131,7 +137,11 @@ module.exports = [
       if (!handled) await mentions.handle(message);
     },
   },
-  { name: Events.GuildMemberAdd, async execute(member, client) { queuePresence(client); await raid.onJoin(member); } },
+  { name: Events.GuildMemberAdd, async execute(member, client) {
+    queuePresence(client);
+    const banned = await antinuke.handleJoin(member);
+    if (!banned) await raid.onJoin(member);
+  } },
   { name: Events.GuildMemberRemove, async execute(member, client) { queuePresence(client); } },
   { name: Events.ChannelDelete, async execute(channel) { if (channel.guild) recovery.noteDeletedChannel(channel); } },
   { name: Events.GuildRoleDelete, async execute(role) { recovery.noteDeletedRole(role); } },

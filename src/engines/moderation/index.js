@@ -6,6 +6,7 @@ const { formatDuration, clip } = require('../../utils/helpers');
 
 const ACTION_EMOJI = {
   ban: E.banHammer, unban: E.banHammer, softban: E.banHammer, massban: E.banHammer, kick: E.moderatorShield,
+  masskick: E.moderatorShield,
   timeout: E.timeoutClock, untimeout: E.timeoutClock, warn: E.modernRules, lock: E.modernRules, unlock: E.modernRules,
   purge: E.moderatorShield, nickname: E.modernStaff, role: E.modernStaff, quarantine: E.clearShield,
 };

@@ -148,6 +148,21 @@ const MIGRATIONS = [
       ALTER TABLE whitelist ADD COLUMN scopes TEXT;
     `,
   },
+  {
+    version: 4,
+    name: 'nuke watch',
+    sql: `
+      CREATE TABLE nuke_watch (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        reason TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
+      );
+      CREATE INDEX idx_nuke_watch_expiry ON nuke_watch (guild_id, expires_at);
+    `,
+  },
 ];
 
 let db = null;

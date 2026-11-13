@@ -88,7 +88,7 @@ module.exports = {
     list: '/whitelist list',
     check: '/whitelist check user:@member',
   },
-  addEntry, removeEntry,
+  addEntry, removeEntry, describe,
   data: new SlashCommandBuilder().setName('whitelist').setDescription('Manage antinuke exemptions.')
     .setDefaultMemberPermissions(P.Administrator)
     .addSubcommand((s) => s.setName('add').setDescription('Add or update a trusted user or role.')

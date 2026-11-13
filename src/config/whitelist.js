@@ -12,6 +12,7 @@ const SCOPE_LABELS = {
   roleUpdate: 'Role edit',
   massBan: 'Mass ban',
   massKick: 'Mass kick',
+  massUnban: 'Mass unban',
   prune: 'Member prune',
   webhookCreate: 'Webhook create',
   webhookDelete: 'Webhook delete',
@@ -26,7 +27,11 @@ const SCOPE_LABELS = {
   massDelete: 'Mass message delete',
   emojiDelete: 'Emoji delete',
   stickerDelete: 'Sticker delete',
+  threadDelete: 'Thread delete',
+  assetCreate: 'Emoji/sticker/soundboard spam',
+  automodRule: 'Automod tampering',
   vanityChange: 'Vanity URL change',
+  nukeGuard: 'Nuke Guard',
 };
 
 /** Presets for the slash command. `keys: null` means the level's default behaviour. */
@@ -40,14 +45,18 @@ const SCOPE_PRESETS = {
   'channel-rename': { name: 'Channel rename/edit', keys: ['channelUpdate'] },
   'channel-delete': { name: 'Channel delete', keys: ['channelDelete'] },
   roles: { name: 'Role create/delete/edit', keys: ['roleCreate', 'roleDelete', 'roleUpdate'] },
-  members: { name: 'Bans, kicks & prunes', keys: ['massBan', 'massKick', 'prune'] },
+  members: { name: 'Bans, kicks, unbans & prunes', keys: ['massBan', 'massKick', 'massUnban', 'prune'] },
   webhooks: { name: 'Webhooks', keys: ['webhookCreate', 'webhookDelete', 'webhookUpdate'] },
   server: { name: 'Server settings & vanity', keys: ['guildUpdate', 'vanityChange', 'integration'] },
   invites: { name: 'Invite spam', keys: ['inviteSpam'] },
   messages: { name: 'Message deletion', keys: ['massDelete'] },
   emojis: { name: 'Emoji & sticker deletion', keys: ['emojiDelete', 'stickerDelete'] },
+  assets: { name: 'Emoji, sticker & soundboard spam', keys: ['emojiDelete', 'stickerDelete', 'assetCreate'] },
+  threads: { name: 'Thread deletion', keys: ['threadDelete'] },
+  automod: { name: 'Automod tampering', keys: ['automodRule'] },
   bots: { name: 'Bot additions', keys: ['botAdd'] },
   permissions: { name: 'Permission escalation', keys: ['permEscalation'] },
+  nuke: { name: 'Nuke Guard (destructive bursts)', keys: ['nukeGuard'] },
 };
 
 /** JSON stored in the DB -> array of module keys, ['*'] for everything, or null for the level default. */

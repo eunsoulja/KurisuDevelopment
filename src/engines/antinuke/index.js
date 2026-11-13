@@ -14,10 +14,14 @@ const windows = new Map();   // `${guild}:${exec}:${module}` -> [{ t, w, entry }
 const seen = new Map();      // audit entry id -> timestamp (dedupe)
 const locks = new Map();     // `${guild}:${exec}` -> expiry; after a breach, more actions are mitigated but not re-punished
 const mitigated = new Set(); // entry ids already reverted
+const recent = new Map();    // `${guild}:${exec}` -> [{ t, key, entry }] for the cross-module Nuke Guard
+const alerted = new Map();   // `${guild}:${exec}:${module}` -> watch-alert expiry
 const LOCK_MS = 60_000;
+const NUKE_WATCH_MS = 24 * 3600 * 1000;
 
 const humanize = (s) => s.replace(/([a-z])([A-Z])/g, '$1 $2');
 const actionLabel = (action) => humanize(AuditLogEvent[action] || `Action ${action}`);
+const rowKey = (guildId, executorId) => `${guildId}:${executorId}`;
 
 /** Sliding window counter. Returns { total, items }. Exported for tests. */
 function slide(key, windowMs, weight, entry, nowMs = Date.now()) {
@@ -27,12 +31,24 @@ function slide(key, windowMs, weight, entry, nowMs = Date.now()) {
   return { total: arr.reduce((a, b) => a + b.w, 0), items: arr };
 }
 
+/** Track destructive actions across modules so mixed nukes cannot stay below every threshold. */
+function trackNuke(guildId, executorId, key, entry, windowMs, nowMs = Date.now()) {
+  const mapKey = rowKey(guildId, executorId);
+  const arr = (recent.get(mapKey) || []).filter((x) => nowMs - x.t <= windowMs && x.entry?.id !== entry?.id);
+  arr.push({ t: nowMs, key, entry });
+  recent.set(mapKey, arr);
+  return arr;
+}
+
 function cleanup() {
   const n = Date.now();
   for (const [k, v] of seen) if (n - v > 120_000) seen.delete(k);
   for (const [k, v] of locks) if (v < n) locks.delete(k);
   for (const [k, arr] of windows) { const f = arr.filter((x) => n - x.t < 300_000); if (f.length) windows.set(k, f); else windows.delete(k); }
+  for (const [k, arr] of recent) { const f = arr.filter((x) => n - x.t < 120_000); if (f.length) recent.set(k, f); else recent.delete(k); }
+  for (const [k, v] of alerted) if (v < n) alerted.delete(k);
   if (mitigated.size > 5000) mitigated.clear();
+  try { repo.pruneNukeWatch(n); } catch (err) { log.debug('nuke watch cleanup failed', err); }
 }
 setInterval(cleanup, 60_000).unref();
 
@@ -69,6 +85,11 @@ function classify(entry, guild) {
   return out;
 }
 
+/** Durable 24h watch: a kicked nuke executor is banned the moment they act or rejoin. */
+function watchExecutor(guild, executorId, reason) {
+  repo.addNukeWatch(guild.id, executorId, reason, Date.now() + NUKE_WATCH_MS);
+}
+
 async function handleAuditEntry(entry, guild) {
   try {
     if (!entry?.id || seen.has(entry.id)) return;
@@ -76,7 +97,37 @@ async function handleAuditEntry(entry, guild) {
     const executorId = entry.executorId;
     if (!executorId) return; // cannot attribute: never punish an arbitrary member
     if (!repo.getGuild(guild.id).antinuke_enabled) return;
-    for (const { key, weight } of classify(entry, guild)) {
+
+    const lockKey = rowKey(guild.id, executorId);
+    if (locks.has(lockKey) && locks.get(lockKey) > Date.now()) {
+      for (const { key } of classify(entry, guild)) await mitigate(guild, key, entry, executorId);
+      return;
+    }
+
+    const watch = repo.getNukeWatch(guild.id, executorId);
+    if (watch && !perms.isExempt(guild, executorId, 'general', null)) {
+      await respondWatch(guild, executorId, watch, entry);
+      return;
+    }
+
+    const mods = classify(entry, guild);
+
+    // Nuke Guard runs BEFORE per-module thresholds, so a mixed burst is stopped at once.
+    const guard = repo.getModule(guild.id, 'nukeGuard', MODULES);
+    const activeNuke = guard.enabled
+      ? mods.filter(({ key }) => MODULES[key]?.nuke
+        && repo.getModule(guild.id, key, MODULES).enabled
+        && !perms.isExempt(guild, executorId, MODULES[key].group || 'general', key))
+      : [];
+    if (activeNuke.length) {
+      const items = trackNuke(guild.id, executorId, activeNuke[0].key, entry, guard.window_sec * 1000);
+      if (items.length >= guard.threshold) {
+        await respondNuke(guild, guard, executorId, items);
+        return;
+      }
+    }
+
+    for (const { key, weight } of mods) {
       await evaluate(guild, key, executorId, entry, weight);
     }
   } catch (err) {
@@ -94,20 +145,33 @@ function refreshSnapshot(guild, entry) {
   }
 }
 
+/** Early warning: log the first hit on a destructive module while it is still below threshold. */
+function maybeAlert(guild, key, executorId, total, cfg) {
+  if (!MODULES[key]?.nuke) return;
+  const k = `${guild.id}:${executorId}:${key}`;
+  const now = Date.now();
+  if ((alerted.get(k) || 0) > now) return;
+  alerted.set(k, now + cfg.window_sec * 1000);
+  void logging.watchLog(guild, {
+    executorId, actionLabel: MODULES[key].name, count: total, threshold: cfg.threshold,
+  }).catch(() => {});
+}
+
 async function evaluate(guild, key, executorId, entry, weight) {
   const mod = MODULES[key];
   const cfg = repo.getModule(guild.id, key, MODULES);
   if (!cfg.enabled) return;
   if (perms.isExempt(guild, executorId, mod.group, key)) { if (entry?.action) refreshSnapshot(guild, entry); return; }
 
-  const lockKey = `${guild.id}:${executorId}`;
+  const lockKey = rowKey(guild.id, executorId);
   if (locks.has(lockKey) && locks.get(lockKey) > Date.now()) {
     if (entry) await mitigate(guild, key, entry, executorId);
     return;
   }
   const { total, items } = slide(`${guild.id}:${executorId}:${key}`, cfg.window_sec * 1000, weight, entry);
-  if (total < cfg.threshold) return;
+  if (total < cfg.threshold) { maybeAlert(guild, key, executorId, total, cfg); return; }
 
+  alerted.delete(`${guild.id}:${executorId}:${key}`);
   locks.set(lockKey, Date.now() + LOCK_MS);
   windows.delete(`${guild.id}:${executorId}:${key}`);
   await respond(guild, key, cfg, executorId, total, items.map((i) => i.entry).filter(Boolean), entry);
@@ -125,6 +189,10 @@ async function respond(guild, key, cfg, executorId, total, entries, lastEntry) {
 
   const result = await punish.apply(guild, executorId, kind, `Kurisu antinuke: ${mod.name}`);
 
+  // A kicked executor goes on the 24h nuke watch: rejoin or act again and they are banned.
+  if (result.ok && result.kind === 'ban') repo.removeNukeWatch(guild.id, executorId);
+  else if (result.ok && result.kind === 'kick') watchExecutor(guild, executorId, `Kurisu antinuke: ${mod.name}`);
+
   const notes = [];
   for (const e of entries) { const n = await mitigate(guild, key, e, executorId); if (n) notes.push(n); }
   if (key === 'everyoneMention' || key === 'massMention') notes.push('offending messages removed');
@@ -135,6 +203,78 @@ async function respond(guild, key, cfg, executorId, total, entries, lastEntry) {
   const label = lastEntry?.action !== undefined ? actionLabel(lastEntry.action) : mod.name.replace(/^Anti-/, '');
   repo.addIncident(guild.id, { executorId, module: key, action: label, count: total, threshold: cfg.threshold, response, status, details });
   await logging.incidentLog(guild, { executorId, actionLabel: label, count: total, threshold: cfg.threshold, response, status, details });
+}
+
+/** Cross-module destructive burst. Default response: immediate kick, then 24h watch. */
+async function respondNuke(guild, cfg, executorId, items) {
+  const lockKey = rowKey(guild.id, executorId);
+  recent.delete(lockKey);
+  locks.set(lockKey, Date.now() + LOCK_MS); // block concurrent duplicate responses
+
+  const labels = [...new Set(items.map((i) => MODULES[i.key]?.name || i.key))];
+  const result = await punish.apply(guild, executorId, cfg.punishment, 'Kurisu nuke guard: destructive burst');
+  if (!result.ok) locks.delete(lockKey);
+  if (result.ok && result.kind === 'ban') repo.removeNukeWatch(guild.id, executorId);
+  else if (result.ok && result.kind === 'kick') watchExecutor(guild, executorId, 'Kurisu nuke guard: destructive burst');
+
+  const notes = [];
+  for (const it of items) { const n = await mitigate(guild, it.key, it.entry, executorId); if (n) notes.push(n); }
+
+  const response = result.ok ? PUNISHED_LABEL[result.kind] : 'Punishment failed';
+  const status = result.ok ? 'Neutralized' : 'Unresolved - manual action needed';
+  const details = [result.detail, ...notes].filter(Boolean).join('; ').slice(0, 400);
+  const label = `Nuke attempt (${labels.join(', ')})`;
+  repo.addIncident(guild.id, { executorId, module: 'nukeGuard', action: label, count: items.length, threshold: cfg.threshold, response, status, details });
+  await logging.incidentLog(guild, { executorId, actionLabel: label, count: items.length, threshold: cfg.threshold, response, status, details });
+}
+
+/** A watched user performed any auditable action: ban now, then mitigate the action. */
+async function respondWatch(guild, executorId, watch, entry) {
+  const lockKey = rowKey(guild.id, executorId);
+  if (locks.has(lockKey) && locks.get(lockKey) > Date.now()) return;
+  locks.set(lockKey, Date.now() + LOCK_MS); // block duplicate ban requests from a burst
+  const result = await punish.apply(guild, executorId, 'ban', `Kurisu nuke watch: ${watch.reason}`);
+  if (result.ok) repo.removeNukeWatch(guild.id, executorId);
+  else locks.delete(lockKey);
+  // Revert what the watched user just did. The permEscalation key makes sure
+  // dangerous roles they handed out are removed too.
+  const note = entry ? await mitigate(guild, 'permEscalation', entry, executorId) : null;
+  const response = result.ok ? PUNISHED_LABEL.ban : 'Punishment failed';
+  const status = result.ok ? 'Neutralized' : 'Unresolved - manual action needed';
+  const details = [result.detail, note].filter(Boolean).join('; ').slice(0, 400);
+  repo.addIncident(guild.id, {
+    executorId, module: 'nukeGuard', action: 'Watched executor acted', count: 1, threshold: 1, response, status, details,
+  });
+  await logging.incidentLog(guild, {
+    executorId, actionLabel: 'Watched executor acted', count: 1, threshold: 1, response, status, details,
+  });
+}
+
+/** Called from GuildMemberAdd: watched executors are banned before they can act. */
+async function handleJoin(member) {
+  const guild = member?.guild;
+  try {
+    if (!guild || !repo.getGuild(guild.id).antinuke_enabled) return false;
+    const watch = repo.getNukeWatch(guild.id, member.id);
+    if (!watch) return false;
+    if (perms.isExempt(guild, member.id, 'general', null, member)) return false;
+
+    const result = await punish.apply(guild, member.id, 'ban', `Kurisu nuke watch: ${watch.reason}`);
+    if (result.ok) repo.removeNukeWatch(guild.id, member.id);
+    const response = result.ok ? PUNISHED_LABEL.ban : 'Punishment failed';
+    const status = result.ok ? 'Neutralized' : 'Unresolved - manual action needed';
+    const details = result.detail || watch.reason || null;
+    repo.addIncident(guild.id, {
+      executorId: member.id, module: 'nukeGuard', action: 'Watched executor rejoined', count: 1, threshold: 1, response, status, details,
+    });
+    await logging.incidentLog(guild, {
+      executorId: member.id, actionLabel: 'Watched executor rejoined', count: 1, threshold: 1, response, status, details,
+    });
+    return result.ok;
+  } catch (err) {
+    log.error(`nuke watch join handler error in ${guild?.id}`, err);
+    return false;
+  }
 }
 
 /** Undo what a violating action did. Idempotent per audit entry. */
@@ -176,6 +316,13 @@ async function handleMessage(message) {
     const guild = message.guild;
     const authorId = message.author.id;
 
+    const watch = repo.getNukeWatch(guild.id, authorId);
+    if (watch && !perms.isExempt(guild, authorId, 'general', null, message.member)) {
+      await message.delete().catch(() => {});
+      await respondWatch(guild, authorId, watch, null);
+      return;
+    }
+
     const checks = [];
     if (message.mentions.everyone) checks.push(['everyoneMention', 1]);
     const n = message.mentions.users.size + message.mentions.roles.size;
@@ -192,7 +339,7 @@ async function handleMessage(message) {
 
 async function evaluateMessage(guild, key, executorId, weight, message) {
   const cfg = repo.getModule(guild.id, key, MODULES);
-  const lockKey = `${guild.id}:${executorId}`;
+  const lockKey = rowKey(guild.id, executorId);
   if (locks.has(lockKey) && locks.get(lockKey) > Date.now()) { await message.delete().catch(() => {}); return; }
   const { total, items } = slide(`${guild.id}:${executorId}:${key}`, cfg.window_sec * 1000, weight, null);
   if (total < cfg.threshold) return;
@@ -202,4 +349,7 @@ async function evaluateMessage(guild, key, executorId, weight, message) {
   await respond(guild, key, cfg, executorId, total, [], null);
 }
 
-module.exports = { handleAuditEntry, handleMessage, slide, classify, actionLabel, _state: { windows, seen, locks } };
+module.exports = {
+  handleAuditEntry, handleMessage, handleJoin, slide, classify, trackNuke, actionLabel,
+  _state: { windows, seen, locks, recent, alerted },
+};

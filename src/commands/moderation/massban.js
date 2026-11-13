@@ -18,6 +18,13 @@ module.exports = {
   async execute(i) {
     const err = guard(i, { user: [P.BanMembers], bot: [P.BanMembers] });
     if (err) return fail(i, err);
+
+    // A mass ban is itself the kind of action antinuke watches. Require the
+    // invoker to be exempt so they cannot trip their own protection.
+    if (!perms.isExempt(i.guild, i.user.id, 'general', 'massBan', i.member)) {
+      return fail(i, 'Mass ban requires a whitelist exemption for the mass ban module. Ask the owner to whitelist you first.');
+    }
+
     const ids = parseIds(i.options.getString('ids', true));
     if (!ids.length) return fail(i, 'No valid user IDs found.');
     if (ids.length > LIMITS.massBanMax) return fail(i, `Mass ban is limited to ${LIMITS.massBanMax} users per run.`);
