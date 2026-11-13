@@ -11,15 +11,35 @@ const E = EMOJIS;
 const text = (s) => new TextDisplayBuilder().setContent(String(s).slice(0, 3800));
 const sep = (divider = true) => new SeparatorBuilder().setDivider(divider).setSpacing(SeparatorSpacingSize.Small);
 
-/** Secondary (grey) button only. Never any other style. */
-function btn(customId, label, { disabled = false } = {}) {
-  return new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(ButtonStyle.Secondary).setDisabled(disabled);
+/** Resolve a registry key to a button/select emoji object, or undefined to omit it. Never returns a raw emoji string. */
+function btnEmoji(key) {
+  const value = EMOJIS[key];
+  if (!value) {
+    console.warn(`[ui] missing emoji registry key: ${key}`);
+    return undefined;
+  }
+  const parsed = parseEmoji(value);
+  if (!parsed) {
+    console.warn(`[ui] malformed emoji registry value for ${key}: ${value}`);
+    return undefined;
+  }
+  return parsed;
 }
-/** Secondary (grey) button whose face is a custom emoji instead of text. */
+
+/** Secondary (grey) button only. Never any other style. Use `emoji` (registry key) for the icon; labels stay plain text. */
+function btn(customId, label, { disabled = false, emoji } = {}) {
+  const b = new ButtonBuilder().setCustomId(customId).setLabel(String(label)).setStyle(ButtonStyle.Secondary).setDisabled(disabled);
+  const em = typeof emoji === 'string' ? btnEmoji(emoji) : emoji;
+  if (em) b.setEmoji(em);
+  return b;
+}
+/** Secondary (grey) button whose face is a custom emoji instead of text. Pass a registry value or an emoji object; never falls back to printing a raw emoji string. */
 function emojiBtn(customId, emoji, { disabled = false } = {}) {
-  const parsed = parseEmoji(emoji);
+  const parsed = typeof emoji === 'string' ? parseEmoji(emoji) : emoji;
   const b = new ButtonBuilder().setCustomId(customId).setStyle(ButtonStyle.Secondary).setDisabled(disabled);
-  return parsed ? b.setEmoji(parsed) : b.setLabel(String(emoji));
+  if (parsed && parsed.id && parsed.name) b.setEmoji(parsed);
+  else if (typeof emoji === 'string') console.warn(`[ui] emojiBtn: unrenderable emoji value omitted: ${emoji}`);
+  return b;
 }
 const row = (...components) => new ActionRowBuilder().addComponents(...components);
 const buttons = (...bs) => row(...bs);
@@ -27,10 +47,10 @@ const buttons = (...bs) => row(...bs);
 function select(customId, placeholder, options, { min = 1, max = 1, disabled = false } = {}) {
   const menu = new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setMinValues(min).setMaxValues(max).setDisabled(disabled);
   menu.addOptions(options.map((o) => {
-    const opt = { label: o.label.slice(0, 100), value: o.value, default: !!o.default };
-    if (o.description) opt.description = o.description.slice(0, 100);
-    const em = parseEmoji(o.emoji);
-    if (em) opt.emoji = em;
+    const opt = { label: String(o.label).slice(0, 100), value: o.value, default: !!o.default };
+    if (o.description) opt.description = String(o.description).slice(0, 100);
+    const em = typeof o.emoji === 'string' ? (EMOJIS[o.emoji] ? btnEmoji(o.emoji) : parseEmoji(o.emoji)) : o.emoji;
+    if (em && em.id && em.name) opt.emoji = em;
     return opt;
   }));
   return row(menu);
@@ -97,4 +117,4 @@ async function respond(interaction, payload) {
   return interaction.reply(payload);
 }
 
-module.exports = { E, text, sep, btn, emojiBtn, row, buttons, select, userSelect, roleSelect, channelSelect, container, message, edit, notice, error, respond, V2 };
+module.exports = { E, text, sep, btn, btnEmoji, emojiBtn, row, buttons, select, userSelect, roleSelect, channelSelect, container, message, edit, notice, error, respond, V2 };

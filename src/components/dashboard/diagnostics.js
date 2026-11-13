@@ -123,7 +123,7 @@ function view(guild, opts = {}) {
     'sep',
     rows.map((r) => `${r.icon} **${r.label}**  ·  ${r.value}`).join('\n'),
     'sep',
-    ui.buttons(ui.btn('ks:v:diag', 'Re-check'), ui.btn('ks:v:set', 'Settings'), ui.btn('ks:v:main', 'Back')),
+    ui.buttons(ui.btn('ks:v:diag', 'Re-check'), ui.btn('ks:v:set', 'Settings'), ui.btn('ks:v:main', 'Back', { emoji: 'redDot' })),
   ];
 }
 

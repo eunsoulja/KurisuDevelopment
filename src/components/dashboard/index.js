@@ -163,9 +163,9 @@ function main(guild) {
     `${E.banHammer} **Nuke Watch**  ·  ${watcherText}\n` +
     `${E.banHammerAlt} **Last Incident**  ·  ${lastText}`,
     'sep',
-    ui.buttons(ui.btn('ks:v:prot:0', `${E.clearShield} Protection`), ui.btn('ks:v:wl:trusted_mod', `${E.verifiedDeveloper} Whitelist`)),
-    ui.buttons(ui.btn('ks:v:logs:0', `${E.bugHunter} Logs`), ui.btn('ks:v:set', `${E.modernRules} Settings`)),
-    ui.buttons(ui.btn('ks:v:diag', `${E.modernVerify} Diagnostics`)),
+    ui.buttons(ui.btn('ks:v:prot:0', 'Protection', { emoji: 'clearShield' }), ui.btn('ks:v:wl:trusted_mod', 'Whitelist', { emoji: 'verifiedDeveloper' })),
+    ui.buttons(ui.btn('ks:v:logs:0', 'Logs', { emoji: 'bugHunter' }), ui.btn('ks:v:set', 'Settings', { emoji: 'modernRules' })),
+    ui.buttons(ui.btn('ks:v:diag', 'Diagnostics', { emoji: 'modernVerify' })),
   ];
 }
 
@@ -185,8 +185,8 @@ function protection(guild, page = 0) {
     emoji: E.clearShield,
   }));
   const nav = pages > 1 ? [
-    ui.btn(`ks:v:prot:${p - 1}`, `${E.smallRedDot} Previous`, { disabled: p === 0 }),
-    ui.btn(`ks:v:prot:${p + 1}`, `Next ${E.smallRedDot}`, { disabled: p >= pages - 1 }),
+    ui.btn(`ks:v:prot:${p - 1}`, 'Previous', { disabled: p === 0, emoji: 'smallRedDot' }),
+    ui.btn(`ks:v:prot:${p + 1}`, 'Next', { disabled: p >= pages - 1, emoji: 'smallRedDot' }),
   ] : [];
   return [
     `### ${E.clearShield} PROTECTION MODULES`,
@@ -195,7 +195,7 @@ function protection(guild, page = 0) {
     lines.length ? lines.join('\n') : 'No protection modules.',
     'sep',
     ui.select(`ks:pick:${p}`, 'Configure a module on this page', options),
-    ui.buttons(...nav, ui.btn('ks:v:main', `${E.redDot} Back`)),
+    ui.buttons(...nav, ui.btn('ks:v:main', 'Back', { emoji: 'redDot' })),
   ];
 }
 
@@ -259,7 +259,7 @@ function whitelistView(guild, level = 'trusted_mod', mask = 0n, page = 0) {
     ui.userSelect(`ks:wladd:${wlArgs(level, mask, 0)}`, 'Add or update a user'),
     ui.roleSelect(`ks:wladdr:${wlArgs(level, mask, 0)}`, 'Add or update a role'),
     'sep',
-    ui.buttons(ui.btn(`ks:wsc:${wlArgs(level, mask, 1)}`, `${E.modernRules} Custom Modules`), ui.btn('ks:v:main', `${E.redDot} Back`)),
+    ui.buttons(ui.btn(`ks:wsc:${wlArgs(level, mask, 1)}`, 'Custom Modules', { emoji: 'modernRules' }), ui.btn('ks:v:main', 'Back', { emoji: 'redDot' })),
     'sep',
     '**Remove**',
     ui.userSelect(`ks:wlrm:${wlArgs(level, mask, 0)}`, 'Remove a user'),
@@ -319,7 +319,7 @@ function logsView(guild, page = 0) {
     'sep',
     clip(body, 3000),
     'sep',
-    ui.buttons(...nav, ui.btn('ks:v:main', `${E.redDot} Back`)),
+    ui.buttons(...nav, ui.btn('ks:v:main', 'Back', { emoji: 'redDot' })),
   ];
 }
 
@@ -338,8 +338,8 @@ function settings(guild, logType) {
     '-# Protection, escalation and logging',
     'sep',
     // Each section carries its own heading so the card reads as three groups.
-    { section: `${E.clearShield} **Antinuke**\n-# ${on(g.antinuke_enabled)}`, button: ui.btn('ks:master:antinuke', `${g.antinuke_enabled ? E.smallRedDot : E.verified} ${g.antinuke_enabled ? 'Disable' : 'Enable'}`) },
-    { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', `${g.raid_enabled ? E.smallRedDot : E.verified} ${g.raid_enabled ? 'Disable' : 'Enable'}`) },
+    { section: `${E.clearShield} **Antinuke**\n-# ${on(g.antinuke_enabled)}`, button: ui.btn('ks:master:antinuke', g.antinuke_enabled ? 'Disable' : 'Enable', { emoji: g.antinuke_enabled ? 'smallRedDot' : 'verified' }) },
+    { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', g.raid_enabled ? 'Disable' : 'Enable', { emoji: g.raid_enabled ? 'smallRedDot' : 'verified' }) },
     'sep',
     `**Escalation**  ·  ${g.escalation_threshold ? `auto-ban after **${g.escalation_threshold}** incidents in 24h` : 'Off'}\n**Prefix**  ·  \`${g.prefix || '!'}\``,
     'sep',
@@ -354,13 +354,13 @@ function settings(guild, logType) {
   // "Back" always closes the card, so it never shares a row with a setting. The
   // optional Clear Channel goes with the type picker; the rest split 2 + 2.
   const footer = [
-    ...(hasType ? [ui.btn(`ks:lclr:${logType}`, `${E.smallRedDot} Clear Channel`)] : []),
-    ui.btn('ks:esc', `${E.timeoutClock} Escalation`), ui.btn('ks:v:raid', `${E.modernRaid} Raid`),
-    ui.btn('ks:v:diag', `${E.modernVerify} Diagnostics`),
+    ...(hasType ? [ui.btn(`ks:lclr:${logType}`, 'Clear Channel', { emoji: 'smallRedDot' })] : []),
+    ui.btn('ks:esc', 'Escalation', { emoji: 'timeoutClock' }), ui.btn('ks:v:raid', 'Raid', { emoji: 'modernRaid' }),
+    ui.btn('ks:v:diag', 'Diagnostics', { emoji: 'modernVerify' }),
   ];
   const perRow = Math.ceil(footer.length / 2);
   items.push(ui.buttons(...footer.slice(0, hasType ? 2 : perRow)));
-  items.push(ui.buttons(...footer.slice(hasType ? 2 : perRow), ui.btn('ks:v:main', `${E.redDot} Back`)));
+  items.push(ui.buttons(...footer.slice(hasType ? 2 : perRow), ui.btn('ks:v:main', 'Back', { emoji: 'redDot' })));
   return items;
 }
 
@@ -381,7 +381,7 @@ function raidView(guild) {
     // These two are the only immediate actions on this card, so they get their own row.
     ui.buttons(ui.btn(c.lockdown_active ? 'ks:rlk:off' : 'ks:rlk:on', c.lockdown_active ? 'Unlock Server' : 'Lock Server'),
       ui.btn(c.verification_active ? 'ks:rvf:off' : 'ks:rvf:on', c.verification_active ? 'Verification Off' : 'Verification On')),
-    ui.buttons(ui.btn('ks:rth', `${E.modernRules} Thresholds`), ui.btn('ks:rop', `${E.clearShield} Options`), ui.btn('ks:v:set', `${E.redDot} Back`)),
+    ui.buttons(ui.btn('ks:rth', 'Thresholds', { emoji: 'modernRules' }), ui.btn('ks:rop', 'Options', { emoji: 'clearShield' }), ui.btn('ks:v:set', 'Back', { emoji: 'redDot' })),
   ];
 }
 
