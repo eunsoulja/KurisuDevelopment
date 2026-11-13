@@ -42,21 +42,26 @@ function trackNuke(guildId, executorId, keys, entry, windowMs, nowMs = Date.now(
   const cutoff = nowMs - windowMs;
   const byId = new Map();
 
-  // Persisted actions from before a restart. Persistence is a safety net; if
-  // the auxiliary table is unavailable, keep detecting with memory alone.
-  let persisted = [];
-  try { persisted = repo.listNukeRecent(guildId, executorId, cutoff); } catch (err) { log.debug('nuke recent load failed', err); }
-  for (const row of persisted) {
-    let parsed = [];
-    try { parsed = JSON.parse(row.module_keys || '[]'); } catch { /* ignore malformed row */ }
-    if (!Array.isArray(parsed)) parsed = [];
-    byId.set(String(row.entry_id), {
-      t: row.created_at, keys: parsed, key: parsed[0], entry: { id: row.entry_id },
-    });
+  const memory = recent.get(mapKey) || [];
+
+  // Load persisted actions only when this process has no window yet (startup
+  // or after a response). During a live burst, memory is authoritative, so we
+  // avoid a SQLite read on every audit entry.
+  if (!memory.length) {
+    let persisted = [];
+    try { persisted = repo.listNukeRecent(guildId, executorId, cutoff); } catch (err) { log.debug('nuke recent load failed', err); }
+    for (const row of persisted) {
+      let parsed = [];
+      try { parsed = JSON.parse(row.module_keys || '[]'); } catch { /* ignore malformed row */ }
+      if (!Array.isArray(parsed)) parsed = [];
+      byId.set(String(row.entry_id), {
+        t: row.created_at, keys: parsed, key: parsed[0], entry: { id: row.entry_id },
+      });
+    }
   }
 
   // In-memory actions are newer and keep the full audit entry for mitigation.
-  for (const item of recent.get(mapKey) || []) {
+  for (const item of memory) {
     if (item.t < cutoff) continue;
     const id = item.entry?.id != null ? String(item.entry.id) : `${item.t}:${item.key}`;
     byId.set(id, item);
