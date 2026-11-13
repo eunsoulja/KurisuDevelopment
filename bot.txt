@@ -5,8 +5,7 @@ KURISU SECURITY - BOT HANDOFF / CONTEXT FOR THE NEXT BOT
 Last updated : 2026-11-13
 Repository   : https://github.com/eunsoulja/KurisuDevelopment.git
 Branch       : main
-Latest commit: 4791654 - "Redesign antinuke and security dashboard views"
-               (previous push; this 1.1.1 handoff is newer)
+Latest feature commit: 43df142 - "Polish guilds, nuke guard persistence, help, and docs"
 Version      : 1.1.1
 Stack        : Node.js 22+, discord.js 14, better-sqlite3, dotenv, SQLite
 Database     : SQLite now; MongoDB Atlas migration planned (see section 9.0)
@@ -1037,7 +1036,7 @@ Database           : SQLite now (./data/kurisu.db); MongoDB Atlas planned
 MongoDB variable   : DATABASE_URL (.env only; database name: prismo)
 Bot owner variable : OWNER_IDS
 Version            : 1.1.1
-Latest commit      : 4791654 (previous push; update after this handoff)
+Latest feature commit: 43df142
 Remote             : https://github.com/eunsoulja/KurisuDevelopment.git
 
 ================================================================================
