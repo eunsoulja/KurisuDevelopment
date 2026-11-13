@@ -111,7 +111,9 @@ async function restoreChannel(guild, oldId) {
       }
     }
     repo.deleteSnapshot(guild.id, 'channel', oldId);
-    snapshotChannel(created);
+    // Re-snapshotting is an optimisation, not part of the restore: a partial member
+    // cache must not turn a successful restore into a reported failure.
+    try { snapshotChannel(created); } catch (err) { log.debug('re-snapshot of restored channel failed', err); }
     return note(guild, 'channel', oldId, 'restored', `${data.name}${stripped ? `, ${stripped} dangerous overwrite(s) sanitised` : ''}; messages cannot be recovered`);
   } catch (err) {
     log.warn('channel restore failed', err);
@@ -133,7 +135,7 @@ async function restoreRole(guild, oldId) {
     const pos = Math.min(data.position, me.roles.highest.position - 1);
     if (pos > 0) await role.setPosition(pos).catch(() => {});
     repo.deleteSnapshot(guild.id, 'role', oldId);
-    snapshotRole(role);
+    try { snapshotRole(role); } catch (err) { log.debug('re-snapshot of restored role failed', err); }
     return note(guild, 'role', oldId, 'restored', `${data.name}${safe !== perms ? ', dangerous permissions withheld' : ''}; members must be re-assigned`);
   } catch (err) {
     log.warn('role restore failed', err);

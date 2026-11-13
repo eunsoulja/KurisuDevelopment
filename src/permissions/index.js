@@ -86,7 +86,20 @@ function botMissing(guild, channel, perms) {
   return missing.length ? missing : null;
 }
 
+/**
+ * Discord role hierarchy decides whether the bot can punish, strip or restore.
+ * Returns null when the member or role cache is incomplete (caller skips the row).
+ */
+function rolePosition(guild, member = guild.members.me) {
+  const cache = guild.roles?.cache;
+  if (!member?.roles?.highest || !cache || cache.size === 0) return null; // cache not filled yet
+  const top = member.roles.highest.position || 0;
+  let highest = 0;
+  for (const role of cache.values()) highest = Math.max(highest, role?.position || 0);
+  return { position: top, highest, above: top >= highest };
+}
+
 module.exports = {
   botOwners, isBotOwner, isGuildOwner, isOwnerClass, isTrustedAdmin, canManageSecurity,
-  canGrantLevel, canRemoveEntry, isExempt, checkTarget, botMissing,
+  canGrantLevel, canRemoveEntry, isExempt, checkTarget, botMissing, rolePosition,
 };

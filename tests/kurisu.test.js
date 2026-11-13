@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { AuditLogEvent, MessageFlags } = require('discord.js');
+const {
+  AuditLogEvent, MessageFlags, PermissionsBitField, ChannelType, GuildVerificationLevel, Collection,
+} = require('discord.js');
 const { fakeGuild, walk } = require('./helpers');
 
 process.env.OWNER_IDS = 'botowner';
@@ -15,14 +17,58 @@ const perms = require('../src/permissions');
 const antinuke = require('../src/engines/antinuke');
 const { MODULES, KEYS } = require('../src/engines/antinuke/modules');
 const raid = require('../src/engines/raid');
+const recovery = require('../src/engines/recovery');
+const { DANGEROUS_BITS } = require('../src/config/settings');
 const { EMOJIS, parseEmoji } = require('../src/config/emojis');
-const { ALL_MASK, maskForScopes, maskId, parseScopes, scopesForMask } = require('../src/config/whitelist');
+const { ALL_MASK, SCOPE_PRESETS, maskForScopes, maskId, parseMask, parseScopes, scopesForMask } = require('../src/config/whitelist');
 const helpers = require('../src/utils/helpers');
 const ui = require('../src/components/common/ui');
 const help = require('../src/components/help');
 const dashboard = require('../src/components/dashboard');
 const commands = require('../src/commands').load();
 const text = require('../src/text');
+
+// ---------------------------------------------------------------------------
+// Shared mock helpers. Declared before any test so no test callback hits the
+// temporal dead zone of a `const` helper defined further down the file.
+// ---------------------------------------------------------------------------
+/** Dashboard interaction: a random member unless overridden. */
+const dashInteraction = (over = {}) => {
+  const calls = { updated: null, replied: null };
+  return {
+    calls,
+    customId: 'ks:v:main',
+    guild: { id: 'gi', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } },
+    member: { id: 'rando', permissions: { has: () => true } }, user: { id: 'rando' }, values: [],
+    isFromMessage: () => false, isMessageComponent: () => true,
+    update: async (p) => { calls.updated = p; }, reply: async (p) => { calls.replied = p; },
+    ...over,
+  };
+};
+const plainText = (payload) => JSON.stringify(payload ?? '');
+/** Scopes staged in every ks:wladd / ks:wladdr id of a rendered payload. */
+const stagedScopes = (payload) => walk(payload.components[0].toJSON())
+  .flatMap((n) => (n.custom_id ? [n.custom_id] : []))
+  .filter((id) => id.startsWith('ks:wladd:') || id.startsWith('ks:wladdr:'))
+  // ks:wladd:<level>:<mask>[:<page>] and ks:wladdr:<level>:<mask>[:<page>]
+  .map((id) => scopesForMask(parseMask(id.split(':')[3])) || [])
+  .flat();
+function fakeMember(perms = 0n, over = {}) {
+  const bits = BigInt(perms); // never hand a PermissionsBitField constant to the constructor
+  return {
+    id: 'mod', permissions: new PermissionsBitField(bits), memberPermissions: new PermissionsBitField(bits),
+    roles: { highest: { position: 9, id: 'rmod' }, cache: new Map() },
+    guild: over.guild, kick: async () => {}, timeout: async () => {},
+    ...over,
+  };
+}
+const chatInput = (over = {}) => ({
+  inGuild: () => true, guild: over.guild, user: { id: 'mod', tag: 'mod#0001' }, member: over.member,
+  deferred: false, replied: false,
+  reply: async (p) => { over.sink.replied = p; }, deferReply: async () => { over.deferred = true; },
+  editReply: async (p) => { over.sink.edited = p; },
+  ...over,
+});
 
 test('database: migrations are idempotent and config survives a restart', () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kurisu-')), 'persist.db');
@@ -632,4 +678,366 @@ test('UI: every view fits Discord Components V2 limits', () => {
     assert.ok(nodes.filter((x) => typeof x.type === 'number' && x.type <= 20).length <= 40, 'max 40 components');
     assert.ok(nodes.filter((x) => x.type === 10).reduce((a, x) => a + x.content.length, 0) <= 4000, 'max 4000 text chars');
   }
+});
+
+// ---------------------------------------------------------------------------
+// Mocked interaction and engine coverage (P2 item 11)
+// ---------------------------------------------------------------------------
+
+test('banlist: renders bans and refuses other viewers', async () => {
+  const cmd = commands.get('banlist');
+  const guild = { id: 'b1', bans: { fetch: async () => new Map([['9', { user: { id: '9', username: 'bad' }, reason: 'raid' }]]) } };
+  const text = cmd.render(guild, [{ user: { id: '9', username: 'bad' }, reason: 'raid' }], 0, 'v1')
+    .filter((x) => typeof x === 'string').join('\n');
+  assert.match(text, /BAN LIST/);
+  assert.match(text, /bad/);
+  assert.match(text, /raid/);
+
+  const theirs = { customId: 'kb:someoneelse:0', user: { id: 'v1' }, memberPermissions: new PermissionsBitField(PermissionsBitField.Flags.BanMembers), reply: async (p) => { theirs._p = p; } };
+  await cmd.component(theirs);
+  assert.match(plainText(theirs._p), /not yours/);
+
+  const mine = {
+    customId: 'kb:v1:0', user: { id: 'v1' }, guild, memberPermissions: new PermissionsBitField(PermissionsBitField.Flags.BanMembers),
+    deferred: false, deferUpdate: async () => { mine.deferred = true; }, editReply: async (p) => { mine.edited = p; },
+    reply: async (p) => { mine.refused = p; },
+  };
+  await cmd.component(mine);
+  assert.equal(mine.deferred, true);
+  assert.match(plainText(mine.edited), /BAN LIST/);
+
+  const denied = { customId: 'kb:v1:0', user: { id: 'v1' }, guild, memberPermissions: new PermissionsBitField(0n), reply: async (p) => { denied.refused = p; } };
+  await cmd.component(denied);
+  assert.match(plainText(denied.refused), /You need Ban Members/);
+});
+
+test('incidents: paginates for managers and refuses other users', async () => {
+  const cmd = commands.get('incidents');
+  const gw = { id: 'inc1', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
+  repo.addIncident('inc1', { executorId: 'x1', module: 'massBan', action: 'Member Ban Add', count: 3, threshold: 3, response: 'Banned', status: 'Neutralized' });
+  const text = cmd.render(gw, 0, 'owner').filter((x) => typeof x === 'string').join('\n');
+  assert.match(text, /SECURITY INCIDENTS/);
+  assert.match(text, /1 incident/);
+
+  const owner = { id: 'owner' };
+  const upd = { customId: 'kn:owner:0', guild: gw, member: owner, user: owner, update: async (p) => { upd.p = p; }, reply: async (p) => { upd.p = p; } };
+  await cmd.component(upd);
+  assert.match(plainText(upd.p), /SECURITY INCIDENTS/);
+
+  const other = { customId: 'kn:owner:0', guild: gw, member: owner, user: { id: 'intruder' }, reply: async (p) => { other.p = p; } };
+  await cmd.component(other);
+  assert.match(plainText(other.p), /not yours/);
+
+  const stranger = { customId: 'kn:other:0', guild: gw, member: { id: 'stranger', permissions: new PermissionsBitField(0n) }, user: { id: 'other' }, reply: async (p) => { stranger.p = p; } };
+  await cmd.component(stranger);
+  assert.match(plainText(stranger.p), /not authorised/);
+});
+
+test('raid: lockdown locks channels, writes state and unlock restores them', async () => {
+  const edited = [];
+  const ch = (id, state) => ({
+    id, type: ChannelType.GuildText, manageable: true,
+    permissionOverwrites: {
+      cache: state === 'neutral' ? new Map() : new Map([['g1', state === 'deny'
+        ? { deny: new PermissionsBitField(PermissionsBitField.Flags.SendMessages), allow: new PermissionsBitField(0n) }
+        : { deny: new PermissionsBitField(0n), allow: new PermissionsBitField(PermissionsBitField.Flags.SendMessages) }]]),
+      edit: async (_role, patch) => { edited.push([id, patch.SendMessages]); },
+    },
+  });
+  const { guild } = fakeGuild({
+    id: 'grl',
+    roles: { everyone: { id: 'g1' }, cache: new Map() },
+    channels: { cache: new Map([['c1', ch('c1', 'neutral')], ['c2', ch('c2', 'deny')], ['c3', ch('c3', 'allow')]]) },
+    verificationLevel: 0, features: [],
+    setVerificationLevel: async (lvl) => { guild.verificationLevel = lvl; },
+    disableInvites: async () => {},
+  });
+
+  const lock = await raid.lockdown(guild, 30, 'owner-id');
+  assert.equal(lock.ok, true);
+  assert.equal(lock.locked, 2, 'already-denied channel is skipped');
+  assert.equal(repo.getRaid('grl').lockdown_active, 1);
+  assert.deepEqual(repo.getLockedChannels('grl').map((r) => r.channel_id).sort(), ['__invites__', 'c1', 'c3']);
+  assert.deepEqual(edited, [['c1', false], ['c3', false]]);
+  assert.equal(guild.verificationLevel, GuildVerificationLevel.VeryHigh);
+
+  assert.equal((await raid.lockdown(guild, 30, 'owner-id')).ok, false, 'second lockdown refused');
+
+  const unlock = await raid.unlock(guild, 'owner-id');
+  assert.equal(unlock.ok, true);
+  const restored = new Map(edited.slice(2));
+  assert.equal(restored.get('c1'), null, 'neutral channel restored to neutral');
+  assert.equal(restored.get('c3'), true, 'allowed channel restored to allowed');
+  assert.equal(repo.getRaid('grl').lockdown_active, 0);
+  assert.equal(repo.getLockedChannels('grl').length, 0);
+  assert.equal((await raid.unlock(guild, 'owner-id')).ok, false, 'nothing left to unlock');
+});
+
+test('raid command: status, lockdown and unlock through the command', async () => {
+  const cmd = commands.get('raid');
+  const { guild } = fakeGuild({
+    id: 'grc', roles: { everyone: { id: 'g1' }, cache: new Map() }, channels: { cache: new Map() },
+    verificationLevel: 0, features: [], setVerificationLevel: async () => {}, disableInvites: async () => {},
+  });
+  const member = fakeMember(PermissionsBitField.Flags.Administrator, { guild });
+  const sink = {};
+  guild.ownerId = 'mod';
+  const opts = { sub: 'status', minutes: 30 };
+  const i = chatInput({
+    guild, member, sink,
+    options: { getSubcommand: () => opts.sub, getInteger: () => opts.minutes },
+  });
+  await cmd.execute(i);
+  assert.match(plainText(sink.replied), /RAID PROTECTION/);
+  assert.match(plainText(sink.replied), /NORMAL/);
+
+  opts.sub = 'lockdown';
+  await cmd.execute(i);
+  assert.equal(repo.getRaid('grc').lockdown_active, 1);
+  assert.match(plainText(sink.edited), /Lockdown enabled/);
+
+  opts.sub = 'unlock';
+  await cmd.execute(i);
+  assert.equal(repo.getRaid('grc').lockdown_active, 0);
+  assert.match(plainText(sink.edited), /Lockdown ended/);
+
+  guild.ownerId = 'someone-else'; // not the caller, who is a plain moderator
+  const denied = chatInput({ guild, member: fakeMember(0n, { guild }), sink: {}, options: { getSubcommand: () => 'status' } });
+  await commands.get('raid').execute(denied);
+  assert.match(plainText(denied.sink.replied), /Only the server owner/);
+  guild.ownerId = 'mod';
+});
+
+test('verification command: enable, status and disable', async () => {
+  const cmd = commands.get('verification');
+  const { guild } = fakeGuild({
+    id: 'gvf', roles: { everyone: { id: 'g1' }, cache: new Map() }, channels: { cache: new Map() },
+    verificationLevel: 0, setVerificationLevel: async (lvl) => { guild.verificationLevel = lvl; },
+  });
+  guild.ownerId = 'mod';
+  const member = fakeMember(PermissionsBitField.Flags.Administrator, { guild });
+  const opts = { sub: 'enable' };
+  const i = chatInput({ guild, member, sink: {}, options: { getSubcommand: () => opts.sub } });
+
+  await cmd.execute(i);
+  assert.equal(repo.getRaid('gvf').verification_active, 1);
+  assert.equal(guild.verificationLevel, GuildVerificationLevel.High);
+
+  opts.sub = 'status';
+  await cmd.execute(i);
+  assert.match(plainText(i.sink.replied), /Verification mode is \*\*on\*\*/);
+
+  opts.sub = 'disable';
+  await cmd.execute(i);
+  assert.equal(repo.getRaid('gvf').verification_active, 0);
+  assert.equal(guild.verificationLevel, 0, 'previous level restored');
+});
+
+test('recovery: deleted channels and roles are snapshotted and restored without dangerous permissions', async () => {
+  const events = [];
+  const overwrite = (id, allow, deny = 0n) => ({ id, type: 0, allow: new PermissionsBitField(allow), deny: new PermissionsBitField(deny) });
+  const source = {
+    id: 'c1', name: 'general', guild: { id: 'grec' }, isThread: () => false, type: ChannelType.GuildText,
+    parentId: null, rawPosition: 2, topic: 'hello', nsfw: false, rateLimitPerUser: 0,
+    permissionOverwrites: { cache: new Map([
+      ['g1', overwrite('g1', PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.Administrator)],
+      ['ghost', overwrite('ghost', PermissionsBitField.Flags.SendMessages)],
+    ]) },
+  };
+  const { guild } = fakeGuild({
+    id: 'grec',
+    roles: { everyone: { id: 'g1' }, cache: new Map([['g1', { id: 'g1', position: 0 }]]), create: async () => null },
+    channels: {
+      cache: new Map(), fetch: async () => null,
+      create: async (opts) => {
+        events.push(['channel', opts.name, opts.permissionOverwrites]);
+        const created = { ...source, id: 'c2', guild };
+        guild.channels.cache.set('c2', created);
+        return created;
+      },
+    },
+  });
+
+  recovery.snapshotChannel(source);
+  assert.equal(repo.getSnapshot('grec', 'channel', 'c1').data.name, 'general');
+  assert.match(await recovery.restoreChannel(guild, 'c1'), /^restored/);
+  assert.deepEqual(events[0].slice(0, 2), ['channel', 'general']);
+  const own = events[0][2].find((o) => o.id === 'g1');
+  assert.equal(own.allow & DANGEROUS_BITS, 0n, 'restored overwrites never regain dangerous permissions');
+  assert.ok(!events[0][2].some((o) => o.id === 'ghost'), 'overwrites for missing roles are dropped');
+  assert.equal(repo.getSnapshot('grec', 'channel', 'c1'), null, 'consumed snapshot is removed');
+  assert.match(await recovery.restoreChannel(guild, 'missing'), /^skipped/);
+
+  const roleSource = {
+    id: 'r1', name: 'Moderators', guild, color: 0xED4245, hoist: false, mentionable: false, managed: false,
+    position: 3, permissions: new PermissionsBitField(PermissionsBitField.Flags.BanMembers | PermissionsBitField.Flags.ManageChannels),
+  };
+  let createdRole = null;
+  guild.roles.create = async (opts) => { createdRole = opts; return { id: 'r9', setPosition: async () => {} }; };
+  recovery.snapshotRole(roleSource);
+  assert.match(await recovery.restoreRole(guild, 'r1'), /^restored/);
+  assert.equal(createdRole.name, 'Moderators');
+  assert.equal(createdRole.permissions.bitfield & DANGEROUS_BITS, 0n, 'dangerous role permissions are withheld');
+
+  const managed = { ...roleSource, id: 'r2', managed: true };
+  recovery.snapshotRole(managed);
+  assert.equal(repo.getSnapshot('grec', 'role', 'r2'), null, 'managed roles are never snapshotted');
+});
+
+test('recovery: webhooks, unapproved bots and invites are removed and recorded', async () => {
+  const removed = { webhooks: 0, bots: 0, invites: 0 };
+  const hook = { id: 'h1', delete: async () => { removed.webhooks++; } };
+  const { guild } = fakeGuild({ id: 'gclean', members: { cache: new Map(), me: { id: 'kurisu' }, fetch: async () => null } });
+  guild.fetchWebhooks = async () => new Map([['h1', hook], ['other', { delete: async () => { removed.webhooks += 10; } }]]);
+  guild.members.fetch = async (id) => (id === 'bot1' ? { id, user: { id, bot: true }, kick: async () => { removed.bots++; } } : null);
+  guild.invites = { fetch: async () => new Collection([
+    ['i1', { inviterId: 'spammer', delete: async () => { removed.invites++; } }],
+    ['i2', { inviterId: 'other', delete: async () => { removed.invites += 10; } }],
+  ]) };
+
+  assert.match(await recovery.deleteWebhook(guild, 'h1'), /^removed/);
+  assert.match(await recovery.deleteWebhook(guild, 'gone'), /^skipped/);
+  assert.match(await recovery.removeBot(guild, 'bot1'), /^removed/);
+  assert.match(await recovery.deleteInvitesBy(guild, 'spammer'), /^removed/);
+  assert.equal(removed.webhooks, 1, 'only the requested webhook is deleted');
+  assert.equal(removed.bots, 1);
+  assert.equal(removed.invites, 1, "only the spammer's invites are deleted");
+});
+
+// ---------------------------------------------------------------------------
+// Whitelist scope redesign (P1 item 5)
+// ---------------------------------------------------------------------------
+// The dashboard's "preset pending" sentinel (mask -1).
+const PRESET = -1n;
+const wlGuild = { id: 'gwlz', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
+const wlOwner = { id: 'owner', permissions: { has: () => true } };
+const wlSelect = (customId, values = []) => dashInteraction({ customId, values, guild: wlGuild, member: wlOwner, user: wlOwner });
+
+test('whitelist dashboard: presets stage a scope, custom scopes apply per page', async () => {
+  const presets = wlSelect(`ks:wsp:trusted_mod:${maskId(PRESET)}`);
+  await dashboard.handle(presets);
+  const select = walk(presets.calls.updated.components[0].toJSON()).find((n) => n.type === 3 && n.custom_id?.startsWith('ks:wsp'));
+  assert.ok(select, 'preset select is rendered');
+  assert.equal(select.options.length, Object.keys(SCOPE_PRESETS).length + 1, 'every preset plus Custom modules');
+  assert.ok(select.options.some((o) => o.label === 'Level default' && o.default), 'level default is the resting state');
+  assert.ok(select.options.some((o) => o.value === 'custom'), 'custom modules entry exists');
+
+  const channelCreate = KEYS.indexOf('channelCreate');
+  const picked = wlSelect(`ks:wsp:trusted_mod:${maskId(maskForScopes(['channelCreate']))}`, ['channels']);
+  await dashboard.handle(picked);
+  assert.ok(plainText(picked.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(['channelCreate', 'channelDelete', 'channelUpdate']))}`),
+    'picking a preset stages its modules for add/remove');
+
+  // Custom page 1: select a module. It must survive a save and land on the add pickers.
+  const custom = wlSelect(`ks:scl:trusted_mod:${maskId(PRESET)}:1`, ['channelCreate']);
+  await dashboard.handle(custom);
+  assert.ok(plainText(custom.calls.updated).includes(`ks:wsa:trusted_mod:${maskId(maskForScopes(['channelCreate']))}:1`), 'save button carries the selection');
+
+  const saved = wlSelect(`ks:wsa:trusted_mod:${maskId(maskForScopes(['channelCreate']))}:1`);
+  await dashboard.handle(saved);
+  assert.ok(plainText(saved.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(['channelCreate']))}`), 'save returns to the grant page');
+  assert.ok(channelCreate >= 0);
+
+  // With a non-preset set staged, deselecting the whole of page 1 drops those
+  // modules. Build the id from the rendered select so it uses the real encoding.
+  const page1 = KEYS.slice(0, 10);
+  // First 13 modules minus channelDelete: 12 modules, still matching no preset,
+  // so the staged scope stays an explicit module set after page 1 is cleared.
+  const start = maskForScopes(KEYS.slice(0, 13).filter((k) => k !== 'channelCreate'));
+  // Use page 1's rendered picker (the page-2 default would select different modules).
+  const sclId = walk(ui.edit(dashboard.route(wlGuild, `wl:trusted_mod:${maskId(start)}.1`)).components[0].toJSON())
+    .find((n) => n.type === 3 && n.custom_id?.startsWith('ks:scl:')).custom_id;
+  const cleared = wlSelect(sclId, []);
+  await dashboard.handle(cleared);
+  // The page's new state is exactly the submission, so page 2 must survive a
+  // full deselect of page 1 (Discord omits unselected options from values).
+  const saveId = walk(cleared.calls.updated.components[0].toJSON())
+    .flatMap((n) => (n.custom_id ? [n.custom_id] : []))
+    .find((id) => id.startsWith('ks:wsa:'));
+  const staged = new Set(scopesForMask(parseMask(saveId.split(':')[3])) || []); // ks:wsa:<level>:<mask>:<page>
+  for (const key of page1) assert.ok(!staged.has(key), `${key} was deselected`);
+  assert.ok(staged.has(KEYS[10]) && staged.has(KEYS[11]), 'modules from later pages are kept');
+
+  const all = wlSelect('ks:scl:trusted_mod:0:2', ['all']);
+  await dashboard.handle(all);
+  const saveAll = walk(all.calls.updated.components[0].toJSON())
+    .flatMap((n) => (n.custom_id ? [n.custom_id] : []))
+    .find((id) => id.startsWith('ks:wsa:'));
+  assert.equal(parseMask(saveAll.split(':')[3]), ALL_MASK, '"all" saves every module');
+});
+
+test('whitelist dashboard: custom page keeps Save, navigation and a compact entry list', async () => {
+  for (let n = 1; n <= 12; n++) repo.addWhitelist('gwlz', `entry${n}`, 'trusted_mod', 'owner');
+  const view = dashboard.whitelistScopeView(wlGuild, 'trusted_mod', 0n, 1, { rows: [], list: '' });
+  const text = view.filter((x) => typeof x === 'string').join('\n');
+  assert.match(text, /CUSTOM SCOPES/);
+  assert.match(text, /Page 1\/3/);
+  const ids = walk(ui.edit(view).components[0].toJSON()).flatMap((n) => (n.custom_id ? [n.custom_id] : []));
+  assert.ok(ids.includes('ks:wsa:trusted_mod:0:1'), 'Save');
+  assert.ok(ids.includes('ks:wsc:trusted_mod:0'), 'Cancel');
+  assert.ok(ids.includes('ks:scl:trusted_mod:0:1'), 'module picker');
+
+  const grant = dashboard.whitelistView(wlGuild, 'trusted_mod', 0n, 0).filter((x) => typeof x === 'string').join('\n');
+  assert.match(grant, /\+2 more/, 'grant page caps the visible entries');
+  for (let n = 1; n <= 12; n++) repo.removeWhitelist('gwlz', `entry${n}`);
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics view (P1 item 8)
+// ---------------------------------------------------------------------------
+const diagGuild = (over = {}) => {
+  const { guild } = fakeGuild({
+    id: 'gdiag',
+    members: { cache: new Map(), fetch: async () => null, me: { id: 'kurisu', permissions: new PermissionsBitField(0n), roles: { highest: { position: 0 } } } },
+    roles: { everyone: { id: 'gdiag' }, cache: new Map([['r1', { id: 'r1', position: 5 }]]) },
+    ...over,
+  });
+  guild.client = { user: { id: 'kurisu' } };
+  return guild;
+};
+
+test('diagnostics: missing permissions and a low role position are flagged', () => {
+  const guild = diagGuild();
+  const rows = dashboard.diagnostics.checks(guild);
+  const by = (label) => rows.find((r) => r.label === label);
+  assert.equal(by('Bot Permissions').level, 'bad');
+  assert.match(by('Bot Permissions').value, /Ban/);
+  assert.equal(by('Role Position').level, 'bad', 'position 1 is below other roles');
+  assert.equal(by('Audit Log Access').level, 'warn', 'unverified by default');
+  assert.match(dashboard.diagnostics.view(guild).filter((x) => typeof x === 'string').join('\n'), /DIAGNOSTICS/);
+});
+
+test('diagnostics: a setup bot passes, and audit-log access reflects the probe', async () => {
+  const guild = diagGuild();
+  guild.members.me = {
+    id: 'kurisu',
+    permissions: new PermissionsBitField(BigInt(PermissionsBitField.All)),
+    roles: { highest: { position: 10 } },
+  };
+  guild.roles.cache.set('r2', { id: 'r2', position: 9 });
+  const rows = dashboard.diagnostics.checks(guild, { audit: true });
+  const by = (label) => rows.find((r) => r.label === label);
+  assert.equal(by('Bot Permissions').level, 'ok');
+  assert.equal(by('Role Position').level, 'ok');
+  assert.equal(by('Audit Log Access').level, 'ok');
+  assert.equal(by('Lockdown').level, 'ok');
+
+  guild.fetchAuditLogs = async () => ({ entries: new Map() });
+  assert.equal(await dashboard.diagnostics.probe(guild), true);
+  guild.members.me.permissions = new PermissionsBitField(0n);
+  assert.equal(await dashboard.diagnostics.probe(guild), false);
+  guild.fetchAuditLogs = async () => { throw Object.assign(new Error('missing access'), { code: 50013 }); };
+  guild.members.me.permissions = new PermissionsBitField(BigInt(PermissionsBitField.All));
+  assert.equal(await dashboard.diagnostics.probe(guild), false);
+});
+
+test('authorization: diagnostics re-checks access on the interaction', async () => {
+  const denied = dashInteraction({ customId: 'ks:v:diag' });
+  await dashboard.handle(denied);
+  assert.ok(denied.calls.replied);
+  assert.equal(denied.calls.updated, null);
+
+  const mine = dashInteraction({ customId: 'ks:v:diag', guild: diagGuild(), member: wlOwner, user: wlOwner });
+  await dashboard.handle(mine);
+  assert.match(plainText(mine.calls.updated), /DIAGNOSTICS/);
 });

@@ -6,7 +6,7 @@ Last updated : 2026-11-13
 Repository   : https://github.com/eunsoulja/KurisuDevelopment.git
 Branch       : main
 Latest feature commit: d2f8f8f - "Avoid redundant nuke recent reads during a burst"
-Version      : 1.1.1
+Version      : 1.2.0
 Stack        : Node.js 22+, discord.js 14, better-sqlite3, dotenv, SQLite
 Database     : SQLite now; MongoDB Atlas migration planned (see section 9.0)
 UI           : Discord Components V2 (NOT classic embeds)
@@ -44,7 +44,7 @@ Current scale:
   - 24 subcommands.
   - 53 help entries (top-level commands + subcommands).
   - 28 antinuke modules.
-  - 38 automated tests, all passing.
+  - 50 automated tests, all passing.
 
 
 ================================================================================
@@ -77,7 +77,7 @@ Run:
 Tests:
   node --test tests/kurisu.test.js
 
-  Current expected result: 38 of 38 passing.
+  Current expected result: 50 of 50 passing.
   "npm test" may fail in this PowerShell environment because npm.ps1 is
   blocked by execution policy. Use the node command above instead.
 
@@ -136,7 +136,9 @@ Current clean-layout patterns (keep these):
   - Settings: Protection, Escalation/Prefix, Log Channels.
   - Raid: Status, Join Thresholds, Accounts; config row then action row.
   - Logs/Incidents: action on line 1, metadata on line 2.
-  - Whitelist: Grant level, Scope, Add or update, Remove.
+  - Whitelist: Grant level, Scope preset, Add or update, Custom Modules, Remove.
+  - Custom scopes: 10 modules per page, one select, Save / Cancel / nav.
+  - Diagnostics: one status line per check, red dot = fix, clock = check.
   - /guilds: network totals, per-server lines, grey pagination + Refresh.
 
 Important wording: the user says "embed" colloquially. Kurisu cards are
@@ -580,6 +582,7 @@ Routing prefixes:
   kn: incidents
   kb: banlist
   kg: guilds
+  (dashboard diagnostics reuses ks: with route ks:v:diag)
 
 UI:
   src/components/common/ui.js       All Components V2 primitives.
@@ -587,6 +590,7 @@ UI:
   src/components/common/about.js    About card.
   src/components/common/invite.js   Invite card.
   src/components/dashboard/index.js Security Center pages and handlers.
+  src/components/dashboard/diagnostics.js Setup checks (ks:v:diag).
   src/components/help/index.js      Command Center generated from real command
                                     definitions.
   src/config/branding.js            Branding media.
@@ -621,9 +625,11 @@ Database (current SQLite; MongoDB migration planned):
   See section 9.0 for the migration plan.
 
 Tests:
-  tests/kurisu.test.js      38 tests: DB, permissions, antinuke, raid, text
+  tests/kurisu.test.js      50 tests: DB, permissions, antinuke, raid, text
                             parser, commands, /guilds, help, V2 limits,
-                            dashboard and authorization.
+                            dashboard and authorization, whitelist scopes,
+                            diagnostics, banlist/incidents, raid lockdown,
+                            verification, recovery.
 
 Scripts:
   scripts/deploy-commands.js Slash-command registration.
@@ -686,7 +692,7 @@ MongoDB target notes:
 8. CURRENT STATE / RECENT CHANGES
 ================================================================================
 
-Version 1.1.1.
+Version 1.2.0.
 
 Recent work:
   - Added Nuke Guard, persistent 24h nuke watch and early security alerts.
@@ -713,8 +719,37 @@ Recent work:
     "Not set" line.
   - 1.1.1: README/comments standardized on the default "!" prefix, Node 22+,
     OWNER_IDS for /guilds, and AUTO_DEPLOY default false.
+  - 1.2.0 (unreleased): whitelist scope redesign (P1 item 5).
+      * grant page: level select, ONE preset select (incl. "Custom modules…"),
+        then Add/Remove. The old two 25-option multi-selects are gone.
+      * custom page: 10 modules per page, explicit Save / Cancel / Prev / Next.
+      * state travels as <level>:<mask>[:<page>]; page 0 keeps the historical
+        two-argument form, so old customIds and links still work.
+      * a full-page selection is encoded as -(page+1) so "deselect everything on
+        this page" is unambiguous (Discord omits unselected options).
+      * scopeMask() rebuilds the submitted page from the payload only; earlier
+        code silently dropped modules the user never touched.
+  - 1.2.0 (unreleased): diagnostics view (P1 item 8).
+      * Security Center > Diagnostics, and Settings > Diagnostics.
+      * Checks: DB path, deploy mode, emoji registry, required permissions,
+        role position, audit-log access, antinuke/module count, log channels,
+        raid level/lockdown, whitelist, OWNER_IDS, privileged intents.
+      * Pure by default; dashboard.probe() verifies audit-log access over REST.
+  - 1.2.0 (unreleased): recovery.restoreChannel/restoreRole no longer report
+    "failed" when the best-effort re-snapshot of the restored object throws.
 
-Test status: 38/38 passing.
+Test status: 50/50 passing. New coverage: banlist, incidents, raid
+lockdown/unlock, raid and verification commands, recovery snapshot/restore and
+cleanup, whitelist scope redesign, diagnostics, and diagnostics authorization.
+
+Test harness notes:
+  - Shared mocks (dashInteraction, plainText, fakeMember, chatInput,
+    stagedScopes) live at the TOP of tests/kurisu.test.js: a const helper
+    declared after a test runs into the temporal dead zone.
+  - Never pass PermissionsBitField.All (a mutable constant) to the
+    PermissionsBitField constructor; convert with BigInt() first.
+  - DEFAULT string sort puts "__invites__" before "c1" (underscore < letters),
+    so lockdown assertions list it first.
 
 /guilds details:
   - Owner-only via OWNER_IDS; ephemeral.
@@ -902,14 +937,20 @@ P0 - correctness / user-facing confusion
      the incident with the full unique set instead of only the first module.
 
 P1 - UI / UX polish
-  5. Whitelist scope picker is still the most cluttered view
-     File: src/components/dashboard/index.js, whitelistView().
-     It uses two multi-selects because Discord caps options at 25, and carries
-     a mask in the customId. It works, but a cleaner design would be:
-       - preset select
-       - "custom scopes" subpage with pagination
-       - explicit Save/Back
-     Preserve old customIds or handle them gracefully.
+  5. [DONE 1.2.0] Whitelist scope picker redesign
+     Files: src/components/dashboard/index.js (whitelistView(),
+     whitelistScopeView(), scopeMask()), src/config/whitelist.js
+     (presetForMask(), moduleOptions()).
+     Grant page = level select + one preset select + Add/Remove pickers.
+     "Custom modules…" opens a paginated page (10 modules, one select) with
+     Save / Cancel / Prev / Next. State: <level>:<mask>[:<page>].
+     Old behaviour is preserved: legacy ks:wlsc chunk ids still work, an
+     explicit module pick still beats "Level default", and page 0 keeps the
+     historical two-argument ids.
+     The rewritten test found a real bug: a page submission previously rebuilt
+     the page from the carried mask, silently dropping pre-selected modules
+     (Discord omits unselected options), so clearing page 1 wiped page 2.
+     scopeMask() now treats the submitted page as authoritative.
 
   6. [DONE 1.1.1] Settings log-channel list is long
      Now shows only configured channels, a count, and one compact "Not set"
@@ -920,10 +961,17 @@ P1 - UI / UX polish
      Refresh action added; snapshot time is shown as a relative timestamp.
      A refresh cooldown is still optional (P2).
 
-  8. Add a diagnostics / "doctor" view
-     Useful checks: bot role position, missing permissions, audit-log access,
-     emoji visibility, database path, deploy mode, OWNER_IDS configured,
-     privileged intents. This would reduce setup friction and support load.
+  8. [DONE 1.2.0] Diagnostics / "doctor" view
+     File: src/components/dashboard/diagnostics.js, routed as ks:v:diag.
+     Reachable from the Security Center main card and from Settings.
+     Checks database path, deploy mode, emoji registry, required bot
+     permissions (list of missing ones), role position vs the top role,
+     audit-log access, antinuke + enabled module count, configured log
+     channels, raid level and lockdown, whitelist trust entries, OWNER_IDS
+     and (when exposed) the privileged-intent application flags.
+     checks() is pure for tests; probe() performs the REST audit-log request.
+     Uses PermissionsBitField.Flags.* — the bare constant is not enumerable
+     that way (per-member names such as BanMembers live under .Flags).
 
   9. [DONE 1.1.1] Help text examples
      /help shows the slash example and a text example generated with the
@@ -936,11 +984,18 @@ P2 - scale / coverage
      cached memberCount for totals and fetching approximate presence only on
      demand. Refresh currently bypasses the 60s cache on every click.
 
- 11. Add mocked interaction tests
-     Covered now: /guilds totals and Refresh ACK, help prefix examples, compact
-     log settings, and Nuke Guard restart persistence. Still missing:
-     /banlist, /incidents, raid lockdown/verification, recovery, dashboard
-     modals, text-command permission denial, and old customId compatibility.
+ 11. [DONE 1.2.0] Mocked interaction tests
+     Added: /banlist render + viewer/permission refusal, /incidents pagination
+     and viewership checks, raid.lockdown()/unlock() including the
+     already-denied channel skip, invites pause and previous-verification
+     restore, the /raid and /verification commands, recovery
+     snapshot/restoreChannel/restoreRole (dangerous permissions withheld,
+     ghost overwrites dropped), deleteWebhook/removeBot/deleteInvitesBy,
+     the whitelist preset and custom-scope flows, diagnostics (pure + probe),
+     and diagnostics authorization.
+     Still missing: dashboard modals (threshold/escalation/raid inputs) and
+     text-command permission denial. `/masskick` and `/role` permission
+     denials are the natural next additions.
 
  12. Sharding
      Not needed at the current scale. Add ShardingManager if the bot approaches
@@ -1006,7 +1061,12 @@ P2 - scale / coverage
 
 Before saying a change is done:
   [ ] node --check on every changed .js file.
-  [ ] node --test tests/kurisu.test.js -> 38/38 passing.
+  [ ] node --test tests/kurisu.test.js -> 50/50 passing.
+  [ ] Do not declare shared const mock helpers after tests that use them
+      (temporal dead zone -> ReferenceError).
+  [ ] Test mocks that stand in for discord.js objects must provide every
+      property the engine reads (guild, user.user.bot, roles.cache,
+      permissions.has).
   [ ] Render changed views as text/JSON and inspect spacing and component count.
   [ ] Confirm every button is secondary/grey and no embed/color was introduced.
   [ ] Confirm every component interaction re-checks authorization.

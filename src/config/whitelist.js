@@ -133,6 +133,24 @@ const parseMask = (value) => {
   try { return BigInt(parseInt(String(value || '0'), 36) || 0); } catch { return 0n; }
 };
 
+/**
+ * Does a stored mask match a preset exactly? 0n is the level default, ALL_MASK
+ * covers "all"; every other preset is the mask of its module keys.
+ * Ordering matters: 'default' and 'all' must win over the first key-based preset.
+ */
+function presetForMask(mask) {
+  if (!mask) return 'default';
+  if (mask === ALL_MASK) return 'all';
+  for (const [name, preset] of Object.entries(SCOPE_PRESETS)) {
+    if (name === 'default' || name === 'all') continue;
+    if (maskForScopes(preset.keys) === mask) return name;
+  }
+  return null;
+}
+
+/** Dashboard custom-scope selects: every module is one option, ordered by key. */
+const moduleOptions = () => KEYS.map((key) => ({ label: SCOPE_LABELS[key], value: key, description: MODULES[key].desc }));
+
 /** Options for the dashboard multi-select: level default, all modules, then every module. */
 function scopeOptions() {
   return [
@@ -146,4 +164,5 @@ module.exports = {
   SCOPE_LABELS, SCOPE_PRESETS, ALL_MASK,
   storedScopes, parseScopes, scopesLabel, entryAllows,
   maskForScopes, scopesForMask, maskId, parseMask, scopeOptions,
+  presetForMask, moduleOptions,
 };
