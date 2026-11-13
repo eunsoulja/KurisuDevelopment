@@ -445,7 +445,7 @@ test('UI: dashboard shows real database values', () => {
   repo.saveModule('gd', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
   const text = dashboard.main(g).filter((x) => typeof x === 'string').join('\n');
   assert.match(text, /KURISU SECURITY CENTER/);
-  assert.match(text, /Protection Modules\s+\*\*27\/28\*\*/);
+  assert.match(text, /Protection Modules\s+\*\*27 \/ 28\*\*/);
   assert.match(text, /Whitelist Entries\s+\*\*2\*\*/);
   assert.match(text, /Security Incidents\s+\*\*1\*\*/);
 });
@@ -461,6 +461,30 @@ const fakeInteraction = (over = {}) => {
     ...over,
   };
 };
+
+test('dashboard: protection modules paginate and keep the page', async () => {
+  const g = { id: 'gp', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
+  const p2 = dashboard.protection(g, 1).filter((x) => typeof x === 'string').join('\n');
+  assert.match(p2, /page 2\/3/);
+  assert.ok(JSON.stringify(ui.edit(dashboard.protection(g, 1))).includes('ks:pick:1'));
+
+  const owner = { id: 'owner', permissions: { has: () => true } };
+  const pick = fakeInteraction({ customId: 'ks:pick:1', member: owner, user: owner, guild: g, values: [KEYS[10]] });
+  await dashboard.handle(pick);
+  assert.ok(pick.calls.updated);
+  assert.ok(JSON.stringify(pick.calls.updated).includes('ks:v:prot:1'), 'module view keeps its page for Back');
+});
+
+test('antinuke: status view is grouped into clean sections', () => {
+  repo.ensureGuild('ga');
+  const text = commands.get('antinuke').statusView({ id: 'ga', ownerId: 'owner', client: { user: { id: 'kurisu' } } })
+    .filter((x) => typeof x === 'string').join('\n');
+  assert.match(text, /\*\*Status\*\*/);
+  assert.match(text, /\*\*Modules\*\*/);
+  assert.match(text, /\*\*Nuke Guard\*\*/);
+  assert.match(text, /\*\*Nuke Watch\*\*/);
+  assert.match(text, /\*\*Incidents \(24h\)\*\*/);
+});
 
 test('authorization: dashboard rejects unauthorised users on every interaction type', async () => {
   for (const id of ['ks:v:main', 'ks:tog:massBan', 'ks:pun:massBan', 'ks:master:antinuke', 'ks:lclr:antinuke', 'ks:v:raid']) {

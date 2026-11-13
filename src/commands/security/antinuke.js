@@ -21,8 +21,11 @@ function statusView(guild) {
     `### ${E.clearShield} ANTINUKE`,
     '-# Real-time audit-log protection',
     'sep',
-    `Status  ·  **${g.antinuke_enabled ? 'Enabled' : 'Disabled'}**\nModules  ·  **${enabled}/${KEYS.length} enabled**\nNuke Guard  ·  **${guard.enabled ? `${PUNISHMENT_LABEL[guard.punishment]} after ${guard.threshold} actions in ${guard.window_sec}s` : 'Off'}**\nNuke Watch  ·  **${repo.countNukeWatch(guild.id)}**`,
-    `Incidents (24h)  ·  **${recent}**\nLast Incident  ·  ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None'}`,
+    `${g.antinuke_enabled ? E.redDot : E.smallRedDot} **Status**  ·  ${g.antinuke_enabled ? 'Enabled' : 'Disabled'}\n${E.modernRules} **Modules**  ·  ${enabled} / ${KEYS.length} enabled`,
+    'sep',
+    `${E.banHammer} **Nuke Guard**  ·  ${guard.enabled ? 'Armed' : 'Off'}\n-# ${guard.enabled ? `${PUNISHMENT_LABEL[guard.punishment]} after ${guard.threshold} destructive actions in ${guard.window_sec}s` : 'Cross-module burst detection is disabled'}\n${E.ownerShield} **Nuke Watch**  ·  **${repo.countNukeWatch(guild.id)}**`,
+    'sep',
+    `${E.modernStaff} **Incidents (24h)**  ·  ${recent}\n**Last Incident**  ·  ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None'}`,
     'sep',
     ui.buttons(ui.btn('ks:v:main', 'Security Center')),
   ];

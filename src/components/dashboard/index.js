@@ -16,6 +16,8 @@ const PAGE = 6;
 const on = (b) => (b ? 'Enabled' : 'Disabled');
 
 // ---------------------------------------------------------------- views
+const PROT_PAGE = 10;
+
 function main(guild) {
   const g = repo.getGuild(guild.id);
   const r = repo.getRaid(guild.id);
@@ -23,53 +25,64 @@ function main(guild) {
   const enabled = mods.filter((m) => m.enabled).length;
   const guard = repo.getModule(guild.id, 'nukeGuard', MODULES);
   const last = repo.lastIncident(guild.id);
-  const status = g.antinuke_enabled ? 'Enabled' : 'Disabled';
+  const raidStatus = !g.raid_enabled ? 'Off' : r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Active' : r.level;
   return [
     `### ${E.clearShield} KURISU SECURITY CENTER`,
-    `-# Protection Status\n**${status}**`,
-    `${E.clearShield} Antinuke  ·  ${g.antinuke_enabled ? 'Active' : 'Off'}\n${E.modernRaid} Raid Protection  ·  ${g.raid_enabled ? (r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Active' : r.level) : 'Off'}\n${E.modernRules} Security Rules  ·  ${enabled ? 'Active' : 'Off'}`,
+    '-# Protection overview',
     'sep',
-    `Protection Modules  **${enabled}/${KEYS.length}**\nWhitelist Entries  **${repo.countWhitelist(guild.id)}**\nSecurity Incidents  **${repo.countIncidents(guild.id)}**`,
-    `Nuke Guard  ·  **${guard.enabled ? `Armed, ${guard.threshold} in ${guard.window_sec}s` : 'Off'}**\nNuke Watch  ·  **${repo.countNukeWatch(guild.id)}**`,
-    `Last Incident: ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None'}`,
+    `${E.clearShield} **Antinuke**  ·  ${g.antinuke_enabled ? 'Active' : 'Off'}\n${E.modernRaid} **Raid Protection**  ·  ${raidStatus}\n${E.modernRules} **Security Rules**  ·  ${enabled ? 'Active' : 'Off'}`,
     'sep',
-    ui.buttons(ui.btn('ks:v:prot', 'Protection'), ui.btn('ks:v:wl:trusted_mod', 'Whitelist'), ui.btn('ks:v:logs:0', 'Security Logs'), ui.btn('ks:v:set', 'Settings')),
+    `**Overview**\nProtection Modules  **${enabled} / ${KEYS.length}**\nWhitelist Entries  **${repo.countWhitelist(guild.id)}**\nSecurity Incidents  **${repo.countIncidents(guild.id)}**`,
+    'sep',
+    `**Nuke Guard**  ·  ${guard.enabled ? 'Armed' : 'Off'}\n-# ${guard.enabled ? `${PUNISHMENT_LABEL[guard.punishment]} after ${guard.threshold} destructive actions in ${guard.window_sec}s` : 'Cross-module burst detection is disabled'}\n**Nuke Watch**  ·  **${repo.countNukeWatch(guild.id)}**\n**Last Incident**  ·  ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None'}`,
+    'sep',
+    ui.buttons(ui.btn('ks:v:prot:0', 'Protection'), ui.btn('ks:v:wl:trusted_mod', 'Whitelist')),
+    ui.buttons(ui.btn('ks:v:logs:0', 'Security Logs'), ui.btn('ks:v:set', 'Settings')),
   ];
 }
 
-function protection(guild) {
+function protection(guild, page = 0) {
   const mods = repo.getAllModules(guild.id, MODULES);
-  const lines = mods.map((m) => `${m.enabled ? E.redDot : E.smallRedDot} ${MODULES[m.module].name}  ·  ${PUNISHMENT_LABEL[m.punishment]}`);
-  const options = mods.map((m) => ({ label: MODULES[m.module].name, value: m.module, description: `${on(m.enabled)} · ${m.threshold} in ${m.window_sec}s`, emoji: E.clearShield }));
-  // Discord allows at most 25 options per select. With 28 modules the picker
-  // is split into pages of 25 so every module stays reachable.
-  const pages = Math.max(1, Math.ceil(options.length / 25));
-  const menus = [];
-  for (let n = 0; n < pages; n++) {
-    menus.push(ui.select(`ks:pick:${n}`, pages > 1 ? `Select a module (${n + 1}/${pages})` : 'Select a module', options.slice(n * 25, (n + 1) * 25)));
-  }
+  const enabled = mods.filter((m) => m.enabled).length;
+  const pages = Math.max(1, Math.ceil(mods.length / PROT_PAGE));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  const slice = mods.slice(p * PROT_PAGE, (p + 1) * PROT_PAGE);
+  const lines = slice.map((m) => `${m.enabled ? E.redDot : E.smallRedDot} ${MODULES[m.module].name}  ·  ${PUNISHMENT_LABEL[m.punishment]}`);
+  const options = slice.map((m) => ({
+    label: MODULES[m.module].name,
+    value: m.module,
+    description: `${on(m.enabled)} · ${m.threshold} in ${m.window_sec}s`,
+    emoji: E.clearShield,
+  }));
+  const nav = pages > 1 ? [
+    ui.btn(`ks:v:prot:${p - 1}`, 'Previous', { disabled: p === 0 }),
+    ui.btn(`ks:v:prot:${p + 1}`, 'Next', { disabled: p >= pages - 1 }),
+  ] : [];
   return [
     `### ${E.clearShield} PROTECTION MODULES`,
-    '-# Select a module to configure it.',
-    lines.join('\n'),
+    `-# ${enabled} of ${KEYS.length} enabled  ·  page ${p + 1}/${pages}`,
     'sep',
-    ...menus,
-    ui.buttons(ui.btn('ks:v:main', 'Back')),
+    lines.length ? lines.join('\n') : 'No protection modules.',
+    'sep',
+    ui.select(`ks:pick:${p}`, 'Configure a module on this page', options),
+    ui.buttons(...nav, ui.btn('ks:v:main', 'Back')),
   ];
 }
 
-function moduleView(guild, key) {
+function moduleView(guild, key, page = 0) {
   const def = MODULES[key];
-  if (!def) return protection(guild);
+  if (!def) return protection(guild, page);
   const c = repo.getModule(guild.id, key, MODULES);
   return [
     `### ${E.clearShield} ${def.name}`,
     `-# ${def.desc}`,
-    { section: `Status  ·  **${on(c.enabled)}**`, button: ui.btn(`ks:tog:${key}`, c.enabled ? 'Disable' : 'Enable') },
-    `Threshold  ·  **${c.threshold}** within **${c.window_sec}s**\nPunishment  ·  **${PUNISHMENT_LABEL[c.punishment]}**`,
     'sep',
-    ui.select(`ks:pun:${key}`, 'Change punishment', PUNISHMENTS.map((p) => ({ label: PUNISHMENT_LABEL[p], value: p, default: p === c.punishment }))),
-    ui.buttons(ui.btn(`ks:thr:${key}`, 'Threshold'), ui.btn('ks:v:prot', 'Back')),
+    { section: `**Status**  ${on(c.enabled)}\n-# Toggle protection for this module`, button: ui.btn(`ks:tog:${key}:${page}`, c.enabled ? 'Disable' : 'Enable') },
+    'sep',
+    `**Trigger**  ·  **${c.threshold}** action(s) in **${c.window_sec}s**\n**Punishment**  ·  **${PUNISHMENT_LABEL[c.punishment]}**`,
+    'sep',
+    ui.select(`ks:pun:${key}:${page}`, 'Choose punishment', PUNISHMENTS.map((p) => ({ label: PUNISHMENT_LABEL[p], value: p, default: p === c.punishment }))),
+    ui.buttons(ui.btn(`ks:thr:${key}:${page}`, 'Threshold'), ui.btn(`ks:v:prot:${page}`, 'Back')),
   ];
 }
 
@@ -101,16 +114,23 @@ function whitelistView(guild, level = 'trusted_mod', mask = 0n) {
   });
   return [
     `### ${E.modernStaff} WHITELIST`,
+    `-# ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}  ·  owners are always exempt`,
+    'sep',
     list,
     'sep',
-    `-# Level to grant: **${WHITELIST_LEVELS[level]}**`,
-    `-# Scope: **${mask === 0n ? 'Level default' : mask === ALL_MASK ? 'All modules' : scopesLabel(selected)}**`,
+    `**Grant level**  ·  ${WHITELIST_LEVELS[level]}`,
     ui.select(`ks:wlvl:${maskId(mask)}`, 'Choose level', Object.entries(WHITELIST_LEVELS).map(([value, label]) => ({ label, value, default: value === level }))),
+    `**Scope**  ·  ${mask === 0n ? 'Level default' : mask === ALL_MASK ? 'All modules' : scopesLabel(selected)}`,
     ...scopeMenus,
+    'sep',
+    '**Add or update**',
     ui.userSelect(`ks:wladd:${level}:${maskId(mask)}`, 'Add or update a user'),
     ui.roleSelect(`ks:wladdr:${level}:${maskId(mask)}`, 'Add or update a role'),
+    'sep',
+    '**Remove**',
     ui.userSelect(`ks:wlrm:${level}:${maskId(mask)}`, 'Remove a user'),
     ui.roleSelect(`ks:wlrmr:${level}:${maskId(mask)}`, 'Remove a role'),
+    'sep',
     ui.buttons(ui.btn('ks:v:main', 'Back')),
   ];
 }
@@ -122,26 +142,40 @@ function logsView(guild, page = 0) {
   const rows = repo.pageIncidents(guild.id, PAGE, p * PAGE);
   const body = rows.length ? rows.map((r) => {
     const who = /^\d+$/.test(r.executor_id) ? `<@${r.executor_id}>` : 'System';
-    return `**#${r.id}** · <t:${Math.floor(r.created_at / 1000)}:R> · ${r.action}\n-# ${who} · ${r.threshold ? `${r.count}/${r.threshold} · ` : ''}${r.response} · ${r.status}`;
+    const meta = [who, r.threshold ? `${r.count}/${r.threshold}` : null, r.response, r.status].filter(Boolean).join('  ·  ');
+    return `**#${r.id}**  ·  ${r.action}\n-# <t:${Math.floor(r.created_at / 1000)}:R>  ·  ${meta}`;
   }).join('\n\n') : 'No security incidents recorded.';
+  const nav = pages > 1 ? [
+    ui.btn(`ks:v:logs:${p - 1}`, 'Previous', { disabled: p === 0 }),
+    ui.btn(`ks:v:logs:${p + 1}`, 'Next', { disabled: p >= pages - 1 }),
+  ] : [];
   return [
-    `### ${E.banHammer} SECURITY LOGS`, `-# ${total} incident(s) · page ${p + 1}/${pages}`, 'sep', clip(body, 3000),
-    ui.buttons(ui.btn(`ks:v:logs:${p - 1}`, 'Previous', { disabled: p === 0 }), ui.btn(`ks:v:logs:${p + 1}`, 'Next', { disabled: p >= pages - 1 }), ui.btn('ks:v:main', 'Back')),
+    `### ${E.banHammer} SECURITY LOGS`,
+    `-# ${total} ${total === 1 ? 'incident' : 'incidents'}  ·  page ${p + 1}/${pages}`,
+    'sep',
+    clip(body, 3000),
+    'sep',
+    ui.buttons(...nav, ui.btn('ks:v:main', 'Back')),
   ];
 }
 
 function settings(guild, logType) {
   const g = repo.getGuild(guild.id);
   const chans = repo.allLogChannels(guild.id);
-  const lines = Object.entries(LOG_TYPES).map(([k, label]) => `${chans[k] ? E.redDot : E.smallRedDot} ${label}  ·  ${chans[k] ? `<#${chans[k]}>` : 'not set'}`).join('\n');
+  const configured = Object.keys(LOG_TYPES).filter((k) => chans[k]).length;
+  const lines = Object.entries(LOG_TYPES).map(([k, label]) => `${chans[k] ? E.redDot : E.smallRedDot} ${label}  ·  ${chans[k] ? `<#${chans[k]}>` : 'Not set'}`).join('\n');
   const items = [
     `### ${E.modernRules} SETTINGS`,
-    { section: `Antinuke  ·  **${on(g.antinuke_enabled)}**`, button: ui.btn('ks:master:antinuke', g.antinuke_enabled ? 'Disable' : 'Enable') },
-    { section: `Raid Protection  ·  **${on(g.raid_enabled)}**`, button: ui.btn('ks:master:raid', g.raid_enabled ? 'Disable' : 'Enable') },
-    `Escalation  ·  ${g.escalation_threshold ? `ban after **${g.escalation_threshold}** incidents in 24h` : 'off'}`,
-    `Prefix  ·  **${g.prefix || '!'}**`,
+    '-# Protection, escalation and logging',
     'sep',
-    `-# LOG CHANNELS\n${lines}`,
+    '**Protection**',
+    { section: `${E.clearShield} **Antinuke**\n-# ${on(g.antinuke_enabled)}`, button: ui.btn('ks:master:antinuke', g.antinuke_enabled ? 'Disable' : 'Enable') },
+    { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', g.raid_enabled ? 'Disable' : 'Enable') },
+    'sep',
+    `**Escalation**  ·  ${g.escalation_threshold ? `ban after **${g.escalation_threshold}** incidents in 24h` : 'off'}\n**Prefix**  ·  **${g.prefix || '!'}**`,
+    'sep',
+    `**Log Channels**  ·  ${configured} / ${Object.keys(LOG_TYPES).length} configured\n${lines}`,
+    'sep',
     ui.select('ks:lt', 'Choose a log type', Object.entries(LOG_TYPES).map(([value, label]) => ({ label, value, default: value === logType }))),
   ];
   if (logType && LOG_TYPES[logType]) items.push(ui.channelSelect(`ks:lc:${logType}`, `Channel for ${LOG_TYPES[logType]} logs`), ui.buttons(ui.btn(`ks:lclr:${logType}`, 'Clear Channel')));
@@ -153,21 +187,25 @@ function raidView(guild) {
   const c = repo.getRaid(guild.id);
   return [
     `### ${E.modernRaid} RAID PROTECTION`,
-    `Level  ·  **${c.level}**\nLockdown  ·  **${c.lockdown_active ? 'Active' : 'Off'}**\nVerification mode  ·  **${c.verification_active ? 'On' : 'Off'}**`,
+    '-# Join-velocity detection and lockdown',
     'sep',
-    `-# LEVELS (joins within ${c.window_sec}s)\nElevated  ·  ${c.elevated_joins}\nHigh  ·  ${c.high_joins}  ·  raises verification\nLockdown  ·  ${c.lockdown_joins}  ·  ${c.auto_lockdown ? `auto, ${c.lockdown_minutes}m` : 'manual only'}`,
-    `-# ACCOUNTS\nNew account age  ·  under ${c.min_account_age_days}d\nKick new accounts in lockdown  ·  ${c.kick_suspicious ? 'yes' : 'no'}`,
+    `**Status**\nLevel  **${c.level}**\nLockdown  **${c.lockdown_active ? 'Active' : 'Off'}**\nVerification  **${c.verification_active ? 'On' : 'Off'}**`,
     'sep',
-    ui.buttons(ui.btn('ks:rth', 'Thresholds'), ui.btn('ks:rop', 'Options'), ui.btn(c.lockdown_active ? 'ks:rlk:off' : 'ks:rlk:on', c.lockdown_active ? 'Unlock' : 'Lockdown'),
-      ui.btn(c.verification_active ? 'ks:rvf:off' : 'ks:rvf:on', c.verification_active ? 'Verify Off' : 'Verify On'), ui.btn('ks:v:set', 'Back')),
+    `**Join Thresholds**  ·  window ${c.window_sec}s\nElevated  **${c.elevated_joins}**\nHigh  **${c.high_joins}**  ·  raises verification\nLockdown  **${c.lockdown_joins}**  ·  ${c.auto_lockdown ? `auto, ${c.lockdown_minutes}m` : 'manual only'}`,
+    'sep',
+    `**Accounts**\nMinimum age  **${c.min_account_age_days ? `${c.min_account_age_days} days` : 'None'}**\nKick new accounts in lockdown  **${c.kick_suspicious ? 'Yes' : 'No'}**`,
+    'sep',
+    ui.buttons(ui.btn('ks:rth', 'Thresholds'), ui.btn('ks:rop', 'Options'), ui.btn('ks:v:set', 'Back')),
+    ui.buttons(ui.btn(c.lockdown_active ? 'ks:rlk:off' : 'ks:rlk:on', c.lockdown_active ? 'Unlock' : 'Lockdown'),
+      ui.btn(c.verification_active ? 'ks:rvf:off' : 'ks:rvf:on', c.verification_active ? 'Verify Off' : 'Verify On')),
   ];
 }
 
 function route(guild, r) {
-  const [view, arg] = r.split(':');
+  const [view, arg, extra] = r.split(':');
   switch (view) {
-    case 'prot': return protection(guild);
-    case 'mod': return moduleView(guild, arg);
+    case 'prot': return protection(guild, Number(arg) || 0);
+    case 'mod': return moduleView(guild, arg, Number(extra) || 0);
     case 'wl': return whitelistView(guild, arg);
     case 'logs': return logsView(guild, Number(arg) || 0);
     case 'set': return settings(guild, arg);
@@ -208,33 +246,35 @@ async function handle(i) {
   try {
     switch (action) {
       case 'v': return show(route(guild, arg.join(':')));
-      case 'pick': return show(moduleView(guild, i.values[0]));
+      case 'pick': return show(moduleView(guild, i.values[0], Number(arg[0]) || 0));
       case 'tog': {
-        const c = repo.getModule(guild.id, arg[0], MODULES);
-        if (!MODULES[arg[0]]) return show(protection(guild));
-        repo.saveModule(guild.id, arg[0], { ...c, enabled: !c.enabled });
-        await audit(guild, i, `${MODULES[arg[0]].name}: ${c.enabled ? 'disabled' : 'enabled'}`);
-        return show(moduleView(guild, arg[0]));
+        const key = arg[0]; const page = Number(arg[1]) || 0;
+        const c = repo.getModule(guild.id, key, MODULES);
+        if (!MODULES[key]) return show(protection(guild, page));
+        repo.saveModule(guild.id, key, { ...c, enabled: !c.enabled });
+        await audit(guild, i, `${MODULES[key].name}: ${c.enabled ? 'disabled' : 'enabled'}`);
+        return show(moduleView(guild, key, page));
       }
       case 'pun': {
-        const key = arg[0]; const p = i.values[0];
-        if (!MODULES[key] || !PUNISHMENTS.includes(p)) return show(protection(guild));
+        const key = arg[0]; const page = Number(arg[1]) || 0; const p = i.values[0];
+        if (!MODULES[key] || !PUNISHMENTS.includes(p)) return show(protection(guild, page));
         const c = repo.getModule(guild.id, key, MODULES);
         repo.saveModule(guild.id, key, { ...c, punishment: p });
         await audit(guild, i, `${MODULES[key].name}: punishment set to ${PUNISHMENT_LABEL[p]}`);
-        return show(moduleView(guild, key));
+        return show(moduleView(guild, key, page));
       }
       case 'thr': {
-        const c = repo.getModule(guild.id, arg[0], MODULES);
-        return i.showModal(modal(`ks:thrm:${arg[0]}`, `${MODULES[arg[0]].name}`.slice(0, 45),
+        const key = arg[0]; const page = Number(arg[1]) || 0;
+        const c = repo.getModule(guild.id, key, MODULES);
+        return i.showModal(modal(`ks:thrm:${key}:${page}`, `${MODULES[key].name}`.slice(0, 45),
           input('threshold', 'Threshold (1-100)', c.threshold), input('window', 'Window in seconds (1-300)', c.window_sec)));
       }
       case 'thrm': {
-        const key = arg[0]; const t = intIn(i, 'threshold', 1, 100); const w = intIn(i, 'window', 1, 300);
+        const key = arg[0]; const page = Number(arg[1]) || 0; const t = intIn(i, 'threshold', 1, 100); const w = intIn(i, 'window', 1, 300);
         if (!MODULES[key] || t === null || w === null) return i.reply(ui.error('Threshold must be 1-100 and the window 1-300 seconds.'));
         repo.saveModule(guild.id, key, { ...repo.getModule(guild.id, key, MODULES), threshold: t, window_sec: w });
         await audit(guild, i, `${MODULES[key].name}: ${t} within ${w}s`);
-        return show(moduleView(guild, key));
+        return show(moduleView(guild, key, page));
       }
       case 'wlvl': return show(whitelistView(guild, i.values[0], parseMask(arg[0])));
       case 'wlsc': {

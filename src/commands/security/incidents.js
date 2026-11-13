@@ -16,21 +16,21 @@ function render(guild, page = 0, viewerId) {
   const rows = repo.pageIncidents(guild.id, LIMITS.incidentsPerPage, p * LIMITS.incidentsPerPage);
   const body = rows.length ? rows.map((r) => {
     const who = /^\d+$/.test(r.executor_id) ? `<@${r.executor_id}>` : 'System';
+    const meta = [who, r.threshold ? `${r.count}/${r.threshold}` : null, r.response, r.status].filter(Boolean).join('  ·  ');
     const details = r.details ? `\n-# ${clip(r.details, 160)}` : '';
-    return `**#${r.id}** · <t:${Math.floor(r.created_at / 1000)}:R> · ${r.action}\n-# ${who} · ${r.threshold ? `${r.count}/${r.threshold} · ` : ''}${r.response} · ${r.status}${details}`;
+    return `**#${r.id}**  ·  ${r.action}\n-# <t:${Math.floor(r.created_at / 1000)}:R>  ·  ${meta}${details}`;
   }).join('\n\n') : 'No security incidents recorded.';
-  const nav = pages > 1 ? ['sep', ui.buttons(
+  const nav = pages > 1 ? [
     ui.btn(`kn:${viewerId}:${p - 1}`, 'Previous', { disabled: p === 0 }),
     ui.btn(`kn:${viewerId}:${p + 1}`, 'Next', { disabled: p >= pages - 1 }),
-  )] : [];
+  ] : [];
   return [
     `### ${E.banHammer} SECURITY INCIDENTS`,
-    `-# ${total} incident(s) · page ${p + 1}/${pages}`,
+    `-# ${total} ${total === 1 ? 'incident' : 'incidents'}  ·  page ${p + 1}/${pages}`,
     'sep',
     clip(body, 3000),
-    ...nav,
     'sep',
-    ui.buttons(ui.btn('ks:v:main', 'Security Center')),
+    ui.buttons(...nav, ui.btn('ks:v:main', 'Security Center')),
   ];
 }
 
