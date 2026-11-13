@@ -5,7 +5,8 @@ const now = () => Date.now();
 
 // ---------- guild settings ----------
 function ensureGuild(guildId) {
-  get().prepare('INSERT OR IGNORE INTO guild_settings (guild_id, created_at) VALUES (?, ?)').run(guildId, now());
+  // New guilds start with protection off so the owner/admin can configure before enforcement begins.
+  get().prepare('INSERT OR IGNORE INTO guild_settings (guild_id, antinuke_enabled, raid_enabled, created_at) VALUES (?, 0, 0, ?)').run(guildId, now());
   get().prepare('INSERT OR IGNORE INTO raid_config (guild_id) VALUES (?)').run(guildId);
 }
 function getGuild(guildId) {

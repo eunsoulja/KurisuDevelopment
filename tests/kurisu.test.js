@@ -196,6 +196,7 @@ test('antinuke: threshold, fast kick, incident record, dedupe', async () => {
   const { guild, kicked, addMember } = fakeGuild();
   addMember('attacker', { position: 3 });
   repo.ensureGuild('g1');
+  repo.setGuild('g1', 'antinuke_enabled', 1);
   await antinuke.handleAuditEntry(entry('e1', AuditLogEvent.ChannelDelete, 'attacker'), guild);
   assert.equal(kicked.length, 0, 'below threshold: no punishment');
   await antinuke.handleAuditEntry(entry('e1', AuditLogEvent.ChannelDelete, 'attacker'), guild); // duplicate id
@@ -232,6 +233,7 @@ test('antinuke: nuke guard kicks a mixed burst and bans on rejoin', async () => 
   const { guild, kicked, banned, addMember } = fakeGuild({ id: 'gnuke' });
   addMember('nuker', { position: 3 });
   repo.ensureGuild('gnuke');
+  repo.setGuild('gnuke', 'antinuke_enabled', 1);
 
   await antinuke.handleAuditEntry(entry('n1', AuditLogEvent.MemberKick, 'nuker'), guild);
   await antinuke.handleAuditEntry(entry('n2', AuditLogEvent.MemberBanAdd, 'nuker'), guild);
@@ -256,6 +258,7 @@ test('antinuke: nuke guard burst survives an in-memory restart', async () => {
   const { guild, kicked, addMember } = fakeGuild({ id: 'gnuke2' });
   addMember('nuker2', { position: 3 });
   repo.ensureGuild('gnuke2');
+  repo.setGuild('gnuke2', 'antinuke_enabled', 1);
 
   await antinuke.handleAuditEntry(entry('p1', AuditLogEvent.MemberKick, 'nuker2'), guild);
   await antinuke.handleAuditEntry(entry('p2', AuditLogEvent.MemberBanAdd, 'nuker2'), guild);
@@ -549,6 +552,7 @@ const mainOf = (id) => ({ id, ownerId: 'owner', client: { user: { id: 'kurisu' }
 const mainText = (id) => viewText(dashboard.main(mainOf(id)));
 
 test('UI: dashboard shows real database values', () => {
+  repo.ensureGuild('gd'); repo.setGuild('gd', 'antinuke_enabled', 1);
   repo.addWhitelist('gd', 'u1', 'bypass', 'owner'); repo.addWhitelist('gd', 'u2', 'bypass', 'owner');
   repo.addIncident('gd', { executorId: 'x', module: 'massBan', action: 'Member Ban Add', count: 3, threshold: 3, response: 'Banned', status: 'Neutralized' });
   repo.saveModule('gd', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
@@ -560,6 +564,7 @@ test('UI: dashboard shows real database values', () => {
 });
 
 test('UI: security center leads with one verdict, not repeated status lines', () => {
+  repo.ensureGuild('gm1'); repo.setGuild('gm1', 'antinuke_enabled', 1);
   const healthy = mainText('gm1');
   assert.match(healthy, /All 28 modules armed/, 'all-on is a positive verdict');
   assert.equal((healthy.match(/\*\*Antinuke\*\*/g) || []).length, 1, 'antinuke is stated once');
@@ -603,13 +608,13 @@ test('UI: security center navigation is a full grid with no lone button', () => 
     .map((row) => row.toJSON())
     .filter((row) => row.components?.some((c) => c.type === 2));
   assert.equal(rows.length, 3, 'three action rows');
-  // Labels now carry a leading emoji, so compare the words only.
-  const labels = rows.map((row) => row.components.map((c) => c.label.replace(/^<a?:\w+:\d+>\s*/, '')).join('+'));
+  const labels = rows.map((row) => row.components.map((c) => c.label).join('+'));
   assert.deepEqual(labels, ['Protection+Whitelist', 'Logs+Settings', 'Diagnostics']);
   for (const row of rows) {
     for (const c of row.components) {
       assert.equal(c.style, 2, 'grey buttons only');
-      assert.match(c.label, /^<a?:\w+:\d+> /, 'every nav button has a registry emoji');
+      assert.ok(c.emoji && (c.emoji.id || c.emoji.name), 'every nav button has an emoji');
+      assert.ok(!/^<a?:\w+:\d+>/.test(c.label || ''), 'button labels must not contain raw emoji markup');
     }
   }
 });
