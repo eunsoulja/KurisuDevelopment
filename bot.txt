@@ -5,7 +5,7 @@ KURISU SECURITY - BOT HANDOFF / CONTEXT FOR THE NEXT BOT
 Last updated : 2026-11-13
 Repository   : https://github.com/eunsoulja/KurisuDevelopment.git
 Branch       : main
-Latest feature commit: 43df142 - "Polish guilds, nuke guard persistence, help, and docs"
+Latest feature commit: d2f8f8f - "Avoid redundant nuke recent reads during a burst"
 Version      : 1.1.1
 Stack        : Node.js 22+, discord.js 14, better-sqlite3, dotenv, SQLite
 Database     : SQLite now; MongoDB Atlas migration planned (see section 9.0)
@@ -706,7 +706,8 @@ Recent work:
   - 1.1.1: /guilds now acknowledges the component before refreshing and has a
     grey Refresh button; previous/next keep the page.
   - 1.1.1: Nuke Guard burst state persists in SQLite (migration 5) and mixed
-    bursts label every involved module.
+    bursts label every involved module. Live bursts use memory; persisted rows
+    are loaded only on startup, so detection does not add a read per action.
   - 1.1.1: /help shows both slash and current-prefix examples.
   - 1.1.1: settings log list shows configured channels plus one compact
     "Not set" line.
@@ -1036,7 +1037,7 @@ Database           : SQLite now (./data/kurisu.db); MongoDB Atlas planned
 MongoDB variable   : DATABASE_URL (.env only; database name: prismo)
 Bot owner variable : OWNER_IDS
 Version            : 1.1.1
-Latest feature commit: 43df142
+Latest feature commit: d2f8f8f
 Remote             : https://github.com/eunsoulja/KurisuDevelopment.git
 
 ================================================================================
