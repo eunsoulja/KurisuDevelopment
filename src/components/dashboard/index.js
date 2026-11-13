@@ -10,6 +10,7 @@ const { PUNISHMENTS, PUNISHMENT_LABEL, WHITELIST_LEVELS, LOG_TYPES } = require('
 const { SCOPE_LABELS, SCOPE_PRESETS, storedScopes, scopesLabel, scopesForMask, maskForScopes, maskId, parseMask, ALL_MASK, presetForMask, moduleOptions } = require('../../config/whitelist');
 const whitelist = require('../../commands/whitelist/whitelist');
 const diagnostics = require('./diagnostics');
+const { SECURITY_BANNER } = require('../../config/branding');
 const { clip, describeError } = require('../../utils/helpers');
 
 const { E } = ui;
@@ -94,9 +95,23 @@ const PROT_PAGE = 10;
 
 /**
  * Security Center main card.
- * Layout: one verdict, then glanceable stats, then the two live safeguards.
- * Every line carries a different fact - no repeated "Active" filler - and the
- * navigation is a clean 2x2 grid plus a full-width Diagnostics row.
+ *
+ *   [banner]  KURISU SECURITY CENTER        <- title section, portrait accessory
+ *             server name  ·  verdict
+ *   ---------
+ *   Antinuke  Raid                       <- 2-column state grid, one fact each
+ *   Whitelist Incidents
+ *   ---------
+ *   Nuke Guard ................ armed    <- safeguards, status pushed right
+ *   Nuke Watch ................ 0
+ *   Last Incident ............. None
+ *   ---------
+ *   [Protection] [Whitelist]
+ *   [Logs]       [Settings]
+ *   [Diagnostics]
+ *
+ * Every line carries a different fact - no repeated "Active" filler - and every
+ * module group has its own emoji so the card scans by icon, not by reading.
  */
 function main(guild) {
   const g = repo.getGuild(guild.id);
@@ -122,27 +137,33 @@ function main(guild) {
 
   // Raid always shows its real state; "On" alone would hide an active lockdown.
   const raidState = !g.raid_enabled ? 'Off' : r.lockdown_active ? 'Lockdown' : r.level === 'NORMAL' ? 'Normal' : r.level;
-  const guardLine = guard.enabled
-    ? `${PUNISHMENT_LABEL[guard.punishment]} after **${guard.threshold}** actions in **${guard.window_sec}s**`
-    : 'Disabled';
+  const raidIcon = r.lockdown_active ? E.timeoutClock : E.modernRaid;
+  const watcherText = `${watchers} ${watchers === 1 ? 'executor' : 'executors'}`;
+  const lastText = last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None yet';
+  // Discord text is proportional, so a dot leader cannot align. Keeping the
+  // right-hand values the same width (see below) is what actually lines up.
+  const armed = guard.enabled ? 'Armed' : 'Off';
 
   return [
-    `### ${E.clearShield} KURISU SECURITY CENTER`,
-    `${verdict.icon} ${verdict.line}`,
+    // Banner + title share one section so the portrait sits beside the heading
+    // instead of taking a full-width media row above it.
+    { section: `### ${E.clearShield} KURISU SECURITY CENTER\n-# ${clip(guild.name, 60)}  ·  ${verdict.line}`, thumbnail: SECURITY_BANNER },
+
+    // Two columns: the eye compares state across the row, not down a list.
+    `${E.clearShield} **Antinuke**\n-# ${g.antinuke_enabled ? verdict.icon : E.smallRedDot} ${g.antinuke_enabled ? 'On' : 'Off'}`,
+    `${raidIcon} **Raid**\n-# ${raidState}`,
+    `${E.modernStaff} **Whitelist**\n-# ${whitelisted} ${whitelisted === 1 ? 'entry' : 'entries'}`,
+    `${E.banHammer} **Incidents**\n-# ${incidents} logged`,
+    'sep:blank',
+    // Safeguards: label, then a short status. One line each, no fake alignment.
+    `${E.modernRules} **Nuke Guard**  ·  ${armed}\n` +
+    `-# ${guard.enabled ? `${PUNISHMENT_LABEL[guard.punishment]} on ${guard.threshold} actions / ${guard.window_sec}s` : 'Cross-module bursts are not watched'}`,
+    `${E.banHammerAlt} **Nuke Watch**  ·  ${watcherText}\n` +
+    `${E.timeoutClock} **Last Incident**  ·  ${lastText}`,
     'sep',
-    // Glanceable counts: each number is the thing you would actually look for.
-    `${E.clearShield} Antinuke  ·  ${g.antinuke_enabled ? '**On**' : '**Off**'}\n` +
-    `${E.modernRaid} Raid  ·  **${raidState}**\n` +
-    `${E.modernStaff} Whitelist  ·  **${whitelisted}**\n` +
-    `${E.banHammer} Incidents  ·  **${incidents}**`,
-    'sep',
-    `**Nuke Guard**\n-# ${guardLine}\n` +
-    `**Nuke Watch**  ·  **${watchers}** ${watchers === 1 ? 'executor' : 'executors'}\n` +
-    `**Last Incident**  ·  ${last ? `<t:${Math.floor(last.created_at / 1000)}:R>` : 'None yet'}`,
-    'sep',
-    ui.buttons(ui.btn('ks:v:prot:0', 'Protection'), ui.btn('ks:v:wl:trusted_mod', 'Whitelist')),
-    ui.buttons(ui.btn('ks:v:logs:0', 'Security Logs'), ui.btn('ks:v:set', 'Settings')),
-    ui.buttons(ui.btn('ks:v:diag', 'Diagnostics')),
+    ui.buttons(ui.btn('ks:v:prot:0', `${E.clearShield} Protection`), ui.btn('ks:v:wl:trusted_mod', `${E.modernStaff} Whitelist`)),
+    ui.buttons(ui.btn('ks:v:logs:0', `${E.banHammer} Logs`), ui.btn('ks:v:set', `${E.modernRules} Settings`)),
+    ui.buttons(ui.btn('ks:v:diag', `${E.modernVerify} Diagnostics`)),
   ];
 }
 
@@ -162,8 +183,8 @@ function protection(guild, page = 0) {
     emoji: E.clearShield,
   }));
   const nav = pages > 1 ? [
-    ui.btn(`ks:v:prot:${p - 1}`, 'Previous', { disabled: p === 0 }),
-    ui.btn(`ks:v:prot:${p + 1}`, 'Next', { disabled: p >= pages - 1 }),
+    ui.btn(`ks:v:prot:${p - 1}`, `${E.smallRedDot} Previous`, { disabled: p === 0 }),
+    ui.btn(`ks:v:prot:${p + 1}`, `Next ${E.smallRedDot}`, { disabled: p >= pages - 1 }),
   ] : [];
   return [
     `### ${E.clearShield} PROTECTION MODULES`,
@@ -172,7 +193,7 @@ function protection(guild, page = 0) {
     lines.length ? lines.join('\n') : 'No protection modules.',
     'sep',
     ui.select(`ks:pick:${p}`, 'Configure a module on this page', options),
-    ui.buttons(...nav, ui.btn('ks:v:main', 'Back')),
+    ui.buttons(...nav, ui.btn('ks:v:main', `${E.redDot} Back`)),
   ];
 }
 
@@ -236,7 +257,7 @@ function whitelistView(guild, level = 'trusted_mod', mask = 0n, page = 0) {
     ui.userSelect(`ks:wladd:${wlArgs(level, mask, 0)}`, 'Add or update a user'),
     ui.roleSelect(`ks:wladdr:${wlArgs(level, mask, 0)}`, 'Add or update a role'),
     'sep',
-    ui.buttons(ui.btn(`ks:wsc:${wlArgs(level, mask, 1)}`, 'Custom Modules'), ui.btn('ks:v:main', 'Back')),
+    ui.buttons(ui.btn(`ks:wsc:${wlArgs(level, mask, 1)}`, `${E.modernRules} Custom Modules`), ui.btn('ks:v:main', `${E.redDot} Back`)),
     'sep',
     '**Remove**',
     ui.userSelect(`ks:wlrm:${wlArgs(level, mask, 0)}`, 'Remove a user'),
@@ -296,7 +317,7 @@ function logsView(guild, page = 0) {
     'sep',
     clip(body, 3000),
     'sep',
-    ui.buttons(...nav, ui.btn('ks:v:main', 'Back')),
+    ui.buttons(...nav, ui.btn('ks:v:main', `${E.redDot} Back`)),
   ];
 }
 
@@ -315,8 +336,8 @@ function settings(guild, logType) {
     '-# Protection, escalation and logging',
     'sep',
     // Each section carries its own heading so the card reads as three groups.
-    { section: `${E.clearShield} **Antinuke**\n-# ${on(g.antinuke_enabled)}`, button: ui.btn('ks:master:antinuke', g.antinuke_enabled ? 'Disable' : 'Enable') },
-    { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', g.raid_enabled ? 'Disable' : 'Enable') },
+    { section: `${E.clearShield} **Antinuke**\n-# ${on(g.antinuke_enabled)}`, button: ui.btn('ks:master:antinuke', `${g.antinuke_enabled ? E.smallRedDot : E.verified} ${g.antinuke_enabled ? 'Disable' : 'Enable'}`) },
+    { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', `${g.raid_enabled ? E.smallRedDot : E.verified} ${g.raid_enabled ? 'Disable' : 'Enable'}`) },
     'sep',
     `**Escalation**  ·  ${g.escalation_threshold ? `auto-ban after **${g.escalation_threshold}** incidents in 24h` : 'Off'}\n**Prefix**  ·  \`${g.prefix || '!'}\``,
     'sep',
@@ -331,12 +352,13 @@ function settings(guild, logType) {
   // "Back" always closes the card, so it never shares a row with a setting. The
   // optional Clear Channel goes with the type picker; the rest split 2 + 2.
   const footer = [
-    ...(hasType ? [ui.btn(`ks:lclr:${logType}`, 'Clear Channel')] : []),
-    ui.btn('ks:esc', 'Escalation'), ui.btn('ks:v:raid', 'Raid'), ui.btn('ks:v:diag', 'Diagnostics'),
+    ...(hasType ? [ui.btn(`ks:lclr:${logType}`, `${E.smallRedDot} Clear Channel`)] : []),
+    ui.btn('ks:esc', `${E.timeoutClock} Escalation`), ui.btn('ks:v:raid', `${E.modernRaid} Raid`),
+    ui.btn('ks:v:diag', `${E.modernVerify} Diagnostics`),
   ];
   const perRow = Math.ceil(footer.length / 2);
   items.push(ui.buttons(...footer.slice(0, hasType ? 2 : perRow)));
-  items.push(ui.buttons(...footer.slice(hasType ? 2 : perRow), ui.btn('ks:v:main', 'Back')));
+  items.push(ui.buttons(...footer.slice(hasType ? 2 : perRow), ui.btn('ks:v:main', `${E.redDot} Back`)));
   return items;
 }
 
@@ -357,7 +379,7 @@ function raidView(guild) {
     // These two are the only immediate actions on this card, so they get their own row.
     ui.buttons(ui.btn(c.lockdown_active ? 'ks:rlk:off' : 'ks:rlk:on', c.lockdown_active ? 'Unlock Server' : 'Lock Server'),
       ui.btn(c.verification_active ? 'ks:rvf:off' : 'ks:rvf:on', c.verification_active ? 'Verification Off' : 'Verification On')),
-    ui.buttons(ui.btn('ks:rth', 'Thresholds'), ui.btn('ks:rop', 'Options'), ui.btn('ks:v:set', 'Back')),
+    ui.buttons(ui.btn('ks:rth', `${E.modernRules} Thresholds`), ui.btn('ks:rop', `${E.clearShield} Options`), ui.btn('ks:v:set', `${E.redDot} Back`)),
   ];
 }
 

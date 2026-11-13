@@ -531,28 +531,42 @@ test('UI: Components V2, grey buttons only, no accent colour, valid payloads', (
   }
 });
 
+/**
+ * Every piece of text a dashboard view renders, including section bodies.
+ * main() puts the header in a section object (banner + title), so filtering for
+ * plain strings alone would silently miss the title.
+ */
+const viewText = (items) => items.map((x) => {
+  if (typeof x === 'string') return x;
+  if (x && x.section) return x.section;
+  if (x && typeof x.toJSON === 'function') {
+    return walk(x.toJSON()).map((n) => (typeof n.content === 'string' ? n.content : '')).join('\n');
+  }
+  return '';
+}).join('\n');
+
+const mainOf = (id) => ({ id, ownerId: 'owner', client: { user: { id: 'kurisu' } }, name: 'Test Server' });
+const mainText = (id) => viewText(dashboard.main(mainOf(id)));
+
 test('UI: dashboard shows real database values', () => {
-  const g = { id: 'gd', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
   repo.addWhitelist('gd', 'u1', 'bypass', 'owner'); repo.addWhitelist('gd', 'u2', 'bypass', 'owner');
   repo.addIncident('gd', { executorId: 'x', module: 'massBan', action: 'Member Ban Add', count: 3, threshold: 3, response: 'Banned', status: 'Neutralized' });
   repo.saveModule('gd', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
-  const text = dashboard.main(g).filter((x) => typeof x === 'string').join('\n');
+  const text = mainText('gd');
   assert.match(text, /KURISU SECURITY CENTER/);
   assert.match(text, /27 of 28 modules armed\s+·\s+1 off/);
-  assert.match(text, /Whitelist\s+·\s+\*\*2\*\*/);
-  assert.match(text, /Incidents\s+·\s+\*\*1\*\*/);
+  assert.match(text, /\*\*Whitelist\*\*\n-# 2 entries/);
+  assert.match(text, /\*\*Incidents\*\*\n-# 1 logged/);
 });
-
-const mainText = (id) => dashboard.main({ id, ownerId: 'owner', client: { user: { id: 'kurisu' } } })
-  .filter((x) => typeof x === 'string').join('\n');
 
 test('UI: security center leads with one verdict, not repeated status lines', () => {
   const healthy = mainText('gm1');
   assert.match(healthy, /All 28 modules armed/, 'all-on is a positive verdict');
-  assert.equal((healthy.match(/\*\*On\*\*/g) || []).length, 1, 'antinuke is stated once');
+  assert.equal((healthy.match(/\*\*Antinuke\*\*/g) || []).length, 1, 'antinuke is stated once');
+  assert.match(healthy, /\*\*Antinuke\*\*\n-# [^\n]*On/, 'antinuke state sits under its own label');
   assert.ok(!/Security Rules/.test(healthy), 'the ambiguous "Security Rules" line is gone');
   assert.ok(!/28 \/ 28/.test(healthy), 'no padded x / x counters');
-  assert.match(healthy, /\*\*Nuke Watch\*\*\s+·\s+\*\*0\*\* executors/);
+  assert.match(healthy, /\*\*Nuke Watch\*\*\s+·\s+0 executors/);
   assert.match(healthy, /\*\*Last Incident\*\*\s+·\s+None yet/);
 
   repo.saveModule('gm1', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
@@ -563,14 +577,20 @@ test('UI: security center leads with one verdict, not repeated status lines', ()
 });
 
 test('UI: security center navigation is a full grid with no lone button', () => {
-  const rows = dashboard.main({ id: 'gm2', ownerId: 'owner', client: { user: { id: 'kurisu' } } })
+  const rows = dashboard.main(mainOf('gm2'))
     .filter((x) => x && typeof x.toJSON === 'function')
     .map((row) => row.toJSON())
     .filter((row) => row.components?.some((c) => c.type === 2));
   assert.equal(rows.length, 3, 'three action rows');
-  const labels = rows.map((row) => row.components.map((c) => c.label).join('+'));
-  assert.deepEqual(labels, ['Protection+Whitelist', 'Security Logs+Settings', 'Diagnostics']);
-  for (const row of rows) for (const c of row.components) assert.equal(c.style, 2, 'grey buttons only');
+  // Labels now carry a leading emoji, so compare the words only.
+  const labels = rows.map((row) => row.components.map((c) => c.label.replace(/^<a?:\w+:\d+>\s*/, '')).join('+'));
+  assert.deepEqual(labels, ['Protection+Whitelist', 'Logs+Settings', 'Diagnostics']);
+  for (const row of rows) {
+    for (const c of row.components) {
+      assert.equal(c.style, 2, 'grey buttons only');
+      assert.match(c.label, /^<a?:\w+:\d+> /, 'every nav button has a registry emoji');
+    }
+  }
 });
 
 const fakeInteraction = (over = {}) => {
