@@ -49,12 +49,13 @@ function refreshPresence(client) {
   } catch (err) { log.debug('presence update failed', err); }
 }
 
-function snapshotAll(client) {
+async function snapshotAll(client) {
   for (const guild of client.guilds.cache.values()) {
     try {
+      await antinuke.ensureRecentLoaded(guild.id).catch(() => {});
       // Do not capture state while an incident is fresh: it may be the attacker's state.
-      if (repo.recentIncidentSince(guild.id, Date.now() - 15 * 60 * 1000)) continue;
-      recovery.snapshotGuild(guild);
+      if (await repo.recentIncidentSince(guild.id, Date.now() - 15 * 60 * 1000)) continue;
+      await recovery.snapshotGuild(guild);
     } catch (err) { log.warn(`snapshot failed for ${guild.id}`, err); }
   }
 }
@@ -80,22 +81,30 @@ module.exports = [
     name: Events.ClientReady, once: true,
     async execute(client) {
       log.info(`logged in as ${client.user.tag} in ${client.guilds.cache.size} guild(s)`);
-      for (const g of client.guilds.cache.values()) repo.ensureGuild(g.id);
+      for (const g of client.guilds.cache.values()) {
+        await repo.ensureGuild(g.id);
+        try { await antinuke.ensureRecentLoaded(g.id); } catch (e) { log.debug('nuke recent load failed', e); }
+      }
       const problems = await validateEmojis(client).catch((e) => [`validation failed: ${e.message}`]);
       if (problems.length) log.warn(`emoji registry problems (${problems.length})`, problems);
       else log.info('emoji registry validated');
       if (process.env.AUTO_DEPLOY === 'true') await deployCommands(client.commands).catch((e) => log.error('command deploy failed', e));
       refreshPresence(client);
-      snapshotAll(client);
+      await snapshotAll(client);
       client.timers = [
         setInterval(() => raid.tick(client).catch((e) => log.error('raid tick failed', e)), 30_000),
-        setInterval(() => snapshotAll(client), SNAPSHOT_EVERY),
+        setInterval(() => { snapshotAll(client).catch((e) => log.error('snapshot failed', e)); }, SNAPSHOT_EVERY),
         setInterval(() => refreshPresence(client), PRESENCE_EVERY),
       ];
       await raid.tick(client).catch(() => {}); // resolves lockdowns that expired while offline
     },
   },
-  { name: Events.GuildCreate, async execute(guild, client) { repo.ensureGuild(guild.id); try { recovery.snapshotGuild(guild); } catch (e) { log.warn('snapshot failed', e); } refreshPresence(client); } },
+  { name: Events.GuildCreate, async execute(guild, client) {
+    await repo.ensureGuild(guild.id);
+    try { await antinuke.ensureRecentLoaded(guild.id); } catch (e) { log.debug('nuke recent load failed', e); }
+    try { await recovery.snapshotGuild(guild); } catch (e) { log.warn('snapshot failed', e); }
+    refreshPresence(client);
+  } },
   { name: Events.GuildDelete, async execute(guild, client) { refreshPresence(client); } },
   {
     name: Events.InteractionCreate,
@@ -143,8 +152,8 @@ module.exports = [
     if (!banned) await raid.onJoin(member);
   } },
   { name: Events.GuildMemberRemove, async execute(member, client) { queuePresence(client); } },
-  { name: Events.ChannelDelete, async execute(channel) { if (channel.guild) recovery.noteDeletedChannel(channel); } },
-  { name: Events.GuildRoleDelete, async execute(role) { recovery.noteDeletedRole(role); } },
+  { name: Events.ChannelDelete, async execute(channel) { if (channel.guild) await recovery.noteDeletedChannel(channel); } },
+  { name: Events.GuildRoleDelete, async execute(role) { await recovery.noteDeletedRole(role); } },
   { name: Events.Error, async execute(err) { log.error('client error', err); } },
   { name: Events.ShardDisconnect, async execute(ev, id) { log.warn(`shard ${id} disconnected`, { code: ev?.code }); } },
   { name: Events.ShardReconnecting, async execute(id) { log.info(`shard ${id} reconnecting`); } },

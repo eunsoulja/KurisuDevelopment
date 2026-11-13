@@ -15,7 +15,7 @@ const TITLES = {
  */
 async function send(guild, type, head, lines) {
   try {
-    const id = repo.getLogChannel(guild.id, type);
+    const id = await repo.getLogChannel(guild.id, type);
     if (!id) return false;
     const channel = guild.channels.cache.get(id) || await guild.channels.fetch(id).catch(() => null);
     if (!channel || !channel.isTextBased()) return false;

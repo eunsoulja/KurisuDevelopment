@@ -32,6 +32,12 @@ module.exports = {
       : 0;
     const roleLine = roles.length ? clip(roles.slice(0, 12).map((r) => `<@&${r.id}>`).join(' '), 400) : 'None';
 
+    const [warningCount, caseCount, security] = await Promise.all([
+      repo.countWarnings(i.guild.id, user.id),
+      repo.countUserCases(i.guild.id, user.id),
+      whitelist.describe(i.guild, user.id),
+    ]);
+
     return i.reply(ui.message([
       `### ${E.modernStaff} USER INFO`,
       {
@@ -43,8 +49,8 @@ module.exports = {
       'sep',
       `Roles  ·  **${roles.length}**\nTop role  ·  ${member?.roles?.highest && member.roles.highest.id !== i.guild.id ? `<@&${member.roles.highest.id}>` : 'None'}\nDangerous roles  ·  **${dangerous}**\n${roleLine}`,
       'sep',
-      `Warnings  ·  **${repo.countWarnings(i.guild.id, user.id)}**\nModeration cases  ·  **${repo.countUserCases(i.guild.id, user.id)}**`,
-      `Security  ·  ${whitelist.describe(i.guild, user.id)}`,
+      `Warnings  ·  **${warningCount}**\nModeration cases  ·  **${caseCount}**`,
+      `Security  ·  ${security}`,
     ]));
   },
 };

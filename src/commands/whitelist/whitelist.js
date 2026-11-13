@@ -16,7 +16,7 @@ const mention = (targetType, id) => (targetType === 'role' ? `<@&${id}>` : `<@${
 
 /** Shared by the command and the dashboard so both enforce identical rules. Returns { ok, message }. */
 async function addEntry(guild, actorMember, target, level, { targetType = 'user', scopes = null } = {}) {
-  const can = perms.canGrantLevel(guild, actorMember, level);
+  const can = await perms.canGrantLevel(guild, actorMember, level);
   if (!can.ok) return { ok: false, message: can.reason };
   if (targetType === 'user') {
     if (target.id === guild.client.user.id) return { ok: false, message: 'Kurisu is always exempt.' };
@@ -27,12 +27,12 @@ async function addEntry(guild, actorMember, target, level, { targetType = 'user'
     if (level === 'bot') return { ok: false, message: 'The Trusted Bot level is for bot accounts only.' };
     if (target.id === guild.id) return { ok: false, message: 'The @everyone role cannot be whitelisted.' };
   }
-  const existing = repo.getWhitelist(guild.id, target.id);
+  const existing = await repo.getWhitelist(guild.id, target.id);
   if (existing) {
-    const cur = perms.canGrantLevel(guild, actorMember, existing.level);
+    const cur = await perms.canGrantLevel(guild, actorMember, existing.level);
     if (!cur.ok) return { ok: false, message: 'You cannot change that existing entry.' };
   }
-  repo.addWhitelist(guild.id, target.id, level, actorMember.id, { targetType, scopes });
+  await repo.addWhitelist(guild.id, target.id, level, actorMember.id, { targetType, scopes });
   await logging.send(guild, 'config', `${E.modernRules} WHITELIST UPDATED`, [
     `${targetType === 'role' ? 'Role' : 'User'}: ${mention(targetType, target.id)}`,
     `Level: ${WHITELIST_LEVELS[level]}`,
@@ -43,26 +43,26 @@ async function addEntry(guild, actorMember, target, level, { targetType = 'user'
 }
 
 async function removeEntry(guild, actorMember, target) {
-  const can = perms.canRemoveEntry(guild, actorMember, target.id);
+  const can = await perms.canRemoveEntry(guild, actorMember, target.id);
   if (!can.ok) return { ok: false, message: can.reason };
-  const entry = repo.getWhitelist(guild.id, target.id);
+  const entry = await repo.getWhitelist(guild.id, target.id);
   const targetType = entry?.target_type === 'role' ? 'role' : 'user';
-  repo.removeWhitelist(guild.id, target.id);
+  await repo.removeWhitelist(guild.id, target.id);
   await logging.send(guild, 'config', `${E.modernRules} WHITELIST UPDATED`, [`Removed: ${mention(targetType, target.id)}`, `By: <@${actorMember.id}>`]);
   return { ok: true, message: `Removed ${mention(targetType, target.id)} from the whitelist.` };
 }
 
 /** Direct entry plus every role entry that applies to this user. */
-function describe(guild, userId) {
+async function describe(guild, userId) {
   if (userId === guild.client.user.id) return 'Kurisu (always exempt)';
   if (perms.isGuildOwner(guild, userId)) return 'Server Owner (always exempt)';
   if (perms.isBotOwner(userId)) return 'Bot Owner (always exempt)';
   const lines = [];
-  const entry = repo.getWhitelist(guild.id, userId);
+  const entry = await repo.getWhitelist(guild.id, userId);
   if (entry) lines.push(`${WHITELIST_LEVELS[entry.level]}  ·  ${scopesLabel(storedScopes(entry.scopes))}`);
   const member = guild.members.cache.get(userId);
   if (member) {
-    for (const roleEntry of repo.roleWhitelist(guild.id)) {
+    for (const roleEntry of await repo.roleWhitelist(guild.id)) {
       if (member.roles.cache.has(roleEntry.user_id)) {
         lines.push(`via <@&${roleEntry.user_id}>  ·  ${WHITELIST_LEVELS[roleEntry.level]}  ·  ${scopesLabel(storedScopes(roleEntry.scopes))}`);
       }
@@ -106,7 +106,7 @@ module.exports = {
   async execute(i) {
     const err = guard(i, {});
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
+    if (!await perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
     const sub = i.options.getSubcommand();
     if (sub === 'add') {
       const user = i.options.getUser('user');
@@ -128,9 +128,9 @@ module.exports = {
     }
     if (sub === 'check') {
       const u = i.options.getUser('user', true);
-      return i.reply(ui.message([`${E.modernRules} <@${u.id}>`, describe(i.guild, u.id)], { ephemeral: true }));
+      return i.reply(ui.message([`${E.modernRules} <@${u.id}>`, await describe(i.guild, u.id)], { ephemeral: true }));
     }
-    const rows = repo.listWhitelist(i.guild.id);
+    const rows = await repo.listWhitelist(i.guild.id);
     const lines = rows.length ? clip(rows.slice(0, 30).map((r) => {
       const targetType = r.target_type === 'role' ? 'role' : 'user';
       return `${mention(targetType, r.user_id)}  ·  ${WHITELIST_LEVELS[r.level]}  ·  ${scopesLabel(storedScopes(r.scopes))}`;

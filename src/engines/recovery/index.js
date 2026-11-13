@@ -39,22 +39,26 @@ function serializeRole(r) {
   };
 }
 
-function snapshotChannel(channel) {
+async function snapshotChannel(channel) {
   if (!channel.guild || channel.isThread?.()) return;
-  repo.saveSnapshot(channel.guild.id, 'channel', channel.id, channel.name, serializeChannel(channel));
+  await repo.saveSnapshot(channel.guild.id, 'channel', channel.id, channel.name, serializeChannel(channel));
 }
-function snapshotRole(role) {
+async function snapshotRole(role) {
   if (role.managed || role.id === role.guild.id) return;
-  repo.saveSnapshot(role.guild.id, 'role', role.id, role.name, serializeRole(role));
+  await repo.saveSnapshot(role.guild.id, 'role', role.id, role.name, serializeRole(role));
 }
 /** Full refresh. Called on boot and periodically while no incident is active. */
-function snapshotGuild(guild) {
+async function snapshotGuild(guild) {
   const known = { channel: new Set(), role: new Set() };
-  for (const ch of guild.channels.cache.values()) { if (!ch.isThread?.()) { snapshotChannel(ch); known.channel.add(ch.id); } }
-  for (const r of guild.roles.cache.values()) { snapshotRole(r); known.role.add(r.id); }
+  for (const ch of guild.channels.cache.values()) {
+    if (!ch.isThread?.()) { await snapshotChannel(ch); known.channel.add(ch.id); }
+  }
+  for (const r of guild.roles.cache.values()) { await snapshotRole(r); known.role.add(r.id); }
   for (const kind of ['channel', 'role']) {
-    for (const s of repo.listSnapshots(guild.id, kind)) {
-      if (!known[kind].has(s.target_id) && !deletedCache.has(`${kind}:${s.target_id}`)) repo.deleteSnapshot(guild.id, kind, s.target_id);
+    for (const s of await repo.listSnapshots(guild.id, kind)) {
+      if (!known[kind].has(s.target_id) && !deletedCache.has(`${kind}:${s.target_id}`)) {
+        await repo.deleteSnapshot(guild.id, kind, s.target_id);
+      }
     }
   }
 }
@@ -68,7 +72,8 @@ async function lookup(guildId, kind, id) {
     if (hit) return hit.data;
     await sleep(250);
   }
-  return repo.getSnapshot(guildId, kind, id)?.data || null;
+  const snap = await repo.getSnapshot(guildId, kind, id);
+  return snap?.data || null;
 }
 
 function sanitizeOverwrites(guild, overwrites) {
@@ -85,7 +90,7 @@ function sanitizeOverwrites(guild, overwrites) {
   return { overwrites: out, stripped };
 }
 
-const note = (guild, kind, id, result, details) => { repo.addRecovery(guild.id, kind, id, result, details); return `${result}${details ? ` (${details})` : ''}`; };
+const note = async (guild, kind, id, result, details) => { await repo.addRecovery(guild.id, kind, id, result, details); return `${result}${details ? ` (${details})` : ''}`; };
 
 async function restoreChannel(guild, oldId) {
   const data = await lookup(guild.id, 'channel', oldId);
@@ -103,17 +108,15 @@ async function restoreChannel(guild, oldId) {
     }
     const created = await retry(() => guild.channels.create(opts));
     if (data.type === ChannelType.GuildCategory) {
-      for (const s of repo.listSnapshots(guild.id, 'channel')) {
+      for (const s of await repo.listSnapshots(guild.id, 'channel')) {
         if (s.data.parentId === oldId) {
           const child = guild.channels.cache.get(s.target_id);
           if (child) await child.setParent(created.id, { lockPermissions: false }).catch(() => {});
         }
       }
     }
-    repo.deleteSnapshot(guild.id, 'channel', oldId);
-    // Re-snapshotting is an optimisation, not part of the restore: a partial member
-    // cache must not turn a successful restore into a reported failure.
-    try { snapshotChannel(created); } catch (err) { log.debug('re-snapshot of restored channel failed', err); }
+    await repo.deleteSnapshot(guild.id, 'channel', oldId);
+    try { await snapshotChannel(created); } catch (err) { log.debug('re-snapshot of restored channel failed', err); }
     return note(guild, 'channel', oldId, 'restored', `${data.name}${stripped ? `, ${stripped} dangerous overwrite(s) sanitised` : ''}; messages cannot be recovered`);
   } catch (err) {
     log.warn('channel restore failed', err);
@@ -134,8 +137,8 @@ async function restoreRole(guild, oldId) {
     const me = guild.members.me;
     const pos = Math.min(data.position, me.roles.highest.position - 1);
     if (pos > 0) await role.setPosition(pos).catch(() => {});
-    repo.deleteSnapshot(guild.id, 'role', oldId);
-    try { snapshotRole(role); } catch (err) { log.debug('re-snapshot of restored role failed', err); }
+    await repo.deleteSnapshot(guild.id, 'role', oldId);
+    try { await snapshotRole(role); } catch (err) { log.debug('re-snapshot of restored role failed', err); }
     return note(guild, 'role', oldId, 'restored', `${data.name}${safe !== perms ? ', dangerous permissions withheld' : ''}; members must be re-assigned`);
   } catch (err) {
     log.warn('role restore failed', err);
@@ -164,7 +167,7 @@ async function revertRoleUpdate(guild, entry) {
     }
     if (!Object.keys(patch).length) return note(guild, 'role', role.id, 'skipped', 'nothing to revert');
     await role.edit({ ...patch, reason: 'Kurisu recovery: unauthorised role change reverted' });
-    snapshotRole(role);
+    await snapshotRole(role);
     return note(guild, 'role', role.id, 'reverted', removed ? 'dangerous permissions removed' : 'role properties reverted');
   } catch (err) { return note(guild, 'role', entry.targetId, 'failed', err.message); }
 }

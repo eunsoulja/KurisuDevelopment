@@ -12,7 +12,7 @@ module.exports = {
     .setDefaultMemberPermissions(P.Administrator),
   async execute(i) {
     if (!i.inGuild()) return fail(i, 'This command only works in a server.');
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can open the security center.');
-    return i.reply(ui.message(dashboard.main(i.guild), { ephemeral: true }));
+    if (!await perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can open the security center.');
+    return i.reply(ui.message(await dashboard.main(i.guild), { ephemeral: true }));
   },
 };

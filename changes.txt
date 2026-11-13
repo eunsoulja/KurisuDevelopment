@@ -1,0 +1,108 @@
+Kurisu MongoDB migration - code changes (session summary)
+=======================================================
+
+CREATED
+- scripts/migrate-sqlite-to-mongo.js
+  - Reads SQLite (DATABASE_PATH, default ./data/kurisu.db) via better-sqlite3 in read-only mode.
+  - Requires DATABASE_URL, refuses to run without it, never prints the URI (scrubs in errors).
+  - Supports --dry-run (no Mongo writes), warns to back up data/kurisu.db.
+  - Maps all §9.0 tables to Mongo collections with correct field types, string snowflakes, epoch ms timestamps.
+  - Converts nuke_watch.expires_at -> expires_at_date and nuke_recent.created_at -> created_at_date for TTL.
+  - Parses JSON-stored scopes/roles/module_keys/data where present; idempotent via upserts per natural key.
+  - Seeds global counters (cases/incidents/warnings/recovery_log/join_history) and per-guild mod_cases counters to max IDs.
+  - Prints per-table SQLite vs Mongo counts with PASS/FAIL verification and exits non-zero on mismatch/failure.
+- changes.txt
+  - This changelog of modified/created files.
+
+MODIFIED
+- package.json
+  - Bumped version to 2.0.0.
+  - Added dependency: mongodb.
+  - Moved better-sqlite3 to optionalDependencies (kept available for migration script until migration/tests verified).
+  - Added devDependency: mongodb-memory-server.
+  - Added script: "migrate:mongo": "node scripts/migrate-sqlite-to-mongo.js".
+
+- .env.example
+  - Added placeholder DATABASE_URL (never a real URI) and DATABASE_NAME (default prismo) for MongoDB Atlas.
+  - Kept DATABASE_PATH documented for SQLite?Mongo migration reads.
+
+- src/database/index.js
+  - Replaced better-sqlite3/SQLite initialization with official mongodb driver.
+  - Added async open(uri), get(), async close(), async ping(), info(), URI redaction helper, DB name derivation (URI path or DATABASE_NAME, default prismo).
+  - open() connects, selects DB, pings, and ensures indexes before returning; throws scrubbed fatal errors without credentials.
+  - Implemented ensureIndexes() for all collections/indexes from §9.0 including unique indexes (guild_settings/raid_config _id, antinuke_modules, whitelist, log_channels, snapshots, nuke_watch, nuke_recent, quarantine, lockdown_channels, guild+case_number for mod_cases) and TTL indexes (nuke_watch.expires_at_date, nuke_recent.created_at_date).
+  - Added SIGINT/SIGTERM-friendly shutdown hook to close client.
+
+- src/database/repo.js
+  - Full async rewrite for MongoDB with API parity for existing callers.
+  - Keeps Discord snowflakes as strings and timestamps as epoch milliseconds; does not expose ObjectIds.
+  - Added counters collection support with atomic nextId(name) (findOneAndUpdate , upsert, returnDocument after) and ensureCounterAtLeast; per-guild mod case numbering via guild-scoped counter key with 11000 retry.
+  - Added TTL-compatible date fields: nuke_watch.expires_at_date, nuke_recent.created_at_date; still filters expiry in code.
+  - Added in-memory caches with invalidate-on-write for hot reads: guild settings, raid config, antinuke modules, whitelist (by id/roles), log channels; exposed dropGuild/_dropCaches helpers.
+  - Race-safe upserts/atomic operators used for config, modules, raid, whitelist, logs, snapshots, quarantine, nuke watch/recent, lockdown channels.
+  - Normalizes stored JSON-like fields (scopes/roles/module_keys/data) to runtime-friendly shapes.
+
+- src/index.js
+  - Replaced synchronous SQLite startup with async main(): awaits db.open() before client.login().
+  - Added credential-scrubbing fatal handler; removed better-sqlite3-specific error messaging.
+  - Added clear fatal on missing/failed DATABASE_URL connection (advises Atlas IP allowlist) and async DB close on SIGINT/SIGTERM shutdown.
+  - Preserved existing intents, command loading, event wiring, timers, and login error hints.
+
+- src/permissions/index.js
+  - Converted whitelist/authority checks to async for Mongo-backed repo: isTrustedAdmin, canManageSecurity, canGrantLevel, canRemoveEntry, isExempt (awaits whitelist/role whitelist lookups).
+
+- src/text/index.js
+  - Made prefix lookup async (getPrefix awaits repo.getGuild) with in-memory cache retained; handle() awaits prefix; clearPrefix preserved for invalidation.
+
+- src/engines/logging.js
+  - send() now awaits repo.getLogChannel (async Mongo/log cache).
+
+- src/events/core.js
+  - Await repo.ensureGuild on ready/guild create; async snapshot scheduling guarded to avoid capturing during recent incidents; await recovery snapshot/delete hooks and raid tick compatibility preserved.
+
+- src/events/mentions.js
+  - Awaits async text.getPrefix when rendering mention reply.
+
+- src/events/guildlogs.js
+  - Kept async logging delivery compatible with async log channel/config reads.
+
+- src/components/dashboard/diagnostics.js
+  - Converted checks/view to async; database check now pings Mongo via db.ping() and reports DB name only (no URI/path secrets).
+
+- src/components/help/index.js
+  - Updated prefix resolution to async and adjusted initial/handle/render flow to await async data (text.getPrefix, perms.canManageSecurity, dashboard rendering) for Mongo-backed reads.
+
+- src/commands/utility/help.js
+  - Awaits async prefix and help.initial rendering.
+
+- src/commands/configuration/prefix.js
+  - Awaits perms.canManageSecurity/repo.getGuild/repo.setGuild; preserves prefix cache invalidation and config logging.
+
+- src/commands/security/security.js
+  - Awaits perms.canManageSecurity and async dashboard rendering.
+
+- src/commands/whitelist/whitelist.js
+  - Converted add/remove/describe/execute to async with awaited perms/repo operations and async config logging.
+
+- src/engines/antinuke/index.js
+  - Converted to async repo/perms/logging/recovery integration.
+  - Preserved in-memory windows/seen/locks/mitigated/alerted; nuke burst window mirrored to Mongo but persisted rows loaded only when process-local window is empty (no per-audit DB round-trip during live burst).
+  - Async watch/incident persistence, mitigation, cleanup (prune watch/recent), and exemption checks.
+
+- src/engines/antinuke/punish.js
+  - Converted quarantine role lookup/save and quarantine snapshot persistence to async repo calls.
+
+- src/engines/raid/index.js
+  - Converted join handling, escalation, verification, lockdown/unlock, tick, and incident logging to async repo/perms/moderation calls.
+
+- src/engines/moderation/index.js
+  - record() now awaits async repo.addCase and logging.
+
+- src/engines/recovery/index.js
+  - Converted snapshot save/list/delete, lookup, recovery logging, restore/revert flows to async repo operations.
+
+NOTES / REMAINING WORK
+- Many command/component files outside the ones listed above still contain synchronous repo/perms usages from the SQLite implementation and require async/await conversion (dashboard UI handlers, most moderation/security/configuration commands, guildlog consumers as needed) to be fully compatible with the async Mongo repo.
+- tests/kurisu.test.js and tests/helpers.js not yet converted to async Mongo/mongodb-memory-server; migration smoke/additional required tests not yet added.
+- README.md and bot.txt not yet updated to reflect MongoDB Atlas setup, migration/rollback steps, and corrected §12/test/version status.
+- Verification (node --check, grep for unawaited repo/perms calls, node --test, migration dry-run/count checks) not yet completed in this environment.

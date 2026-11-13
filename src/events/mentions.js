@@ -35,7 +35,7 @@ async function handle(message) {
     'sep',
     `Servers  **${client.guilds.cache.size.toLocaleString('en-US')}**\nUsers  **${totalUsers(client).toLocaleString('en-US')}**\nGateway  **${Math.round(client.ws.ping)}ms**\nUptime  **${formatDuration(Math.floor(process.uptime()))}**`,
     'sep',
-    `-# Prefix \`${text.getPrefix(message.guild.id)}\`  ·  Version ${version}`,
+    `-# Prefix \`${await text.getPrefix(message.guild.id)}\`  ·  Version ${version}`,
     ui.buttons(ui.emojiBtn('ki:invite', E.shinyLink)),
   ];
   try {

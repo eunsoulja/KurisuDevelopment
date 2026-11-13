@@ -20,11 +20,11 @@ function caseView(row) {
   ];
 }
 
-function userView(guild, userId, page = 0) {
-  const total = repo.countUserCases(guild.id, userId);
+async function userView(guild, userId, page = 0) {
+  const total = await repo.countUserCases(guild.id, userId);
   const pages = Math.max(1, Math.ceil(total / PER_PAGE));
   const p = Math.min(Math.max(0, page), pages - 1);
-  const rows = repo.pageUserCases(guild.id, userId, PER_PAGE, p * PER_PAGE);
+  const rows = await repo.pageUserCases(guild.id, userId, PER_PAGE, p * PER_PAGE);
   const body = rows.length
     ? rows.map((r) => `**#${r.case_number}** · ${r.action.toUpperCase()} · <t:${Math.floor(r.created_at / 1000)}:d>\n-# <@${r.moderator_id}> · ${clip(r.reason, 180) || 'No reason provided'}`).join('\n\n')
     : 'No cases on record.';
@@ -52,12 +52,12 @@ module.exports = {
     if (err) return fail(i, err);
     const sub = i.options.getSubcommand();
     if (sub === 'view') {
-      const row = repo.getCase(i.guild.id, i.options.getInteger('case', true));
+      const row = await repo.getCase(i.guild.id, i.options.getInteger('case', true));
       if (!row) return fail(i, 'That case does not exist.');
       return i.reply(ui.message(caseView(row), { ephemeral: true }));
     }
     const user = i.options.getUser('user', true);
     const page = (i.options.getInteger('page') || 1) - 1;
-    return i.reply(ui.message(userView(i.guild, user.id, page), { ephemeral: true }));
+    return i.reply(ui.message(await userView(i.guild, user.id, page), { ephemeral: true }));
   },
 };

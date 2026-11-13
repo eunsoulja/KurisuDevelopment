@@ -8,11 +8,11 @@ const { clip } = require('../../utils/helpers');
 
 const { E } = ui;
 
-function render(guildId, userId, page, viewerId) {
-  const total = repo.countWarnings(guildId, userId);
+async function render(guildId, userId, page, viewerId) {
+  const total = await repo.countWarnings(guildId, userId);
   const pages = Math.max(1, Math.ceil(total / LIMITS.warningsPerPage));
   const p = Math.min(Math.max(0, page), pages - 1);
-  const rows = repo.pageWarnings(guildId, userId, LIMITS.warningsPerPage, p * LIMITS.warningsPerPage);
+  const rows = await repo.pageWarnings(guildId, userId, LIMITS.warningsPerPage, p * LIMITS.warningsPerPage);
   const body = rows.length
     ? rows.map((w) => `**#${w.id}** · <t:${Math.floor(w.created_at / 1000)}:d> · <@${w.moderator_id}>\n-# ${clip(w.reason, 200) || 'No reason'}`).join('\n\n')
     : 'No warnings on record.';
@@ -34,13 +34,13 @@ module.exports = {
     const err = guard(i, { user: [P.ModerateMembers] });
     if (err) return fail(i, err);
     const user = i.options.getUser('user', true);
-    return i.reply(ui.message(render(i.guild.id, user.id, 0, i.user.id), { ephemeral: true }));
+    return i.reply(ui.message(await render(i.guild.id, user.id, 0, i.user.id), { ephemeral: true }));
   },
   /** customId: kw:<viewerId>:<userId>:<page> */
   async component(i) {
     const [, viewerId, userId, page] = i.customId.split(':');
     if (i.user.id !== viewerId) return i.reply(ui.error('These controls are not yours.'));
     if (!i.memberPermissions?.has(P.ModerateMembers)) return i.reply(ui.error('You no longer have permission to view warnings.'));
-    return i.update(ui.edit(render(i.guildId, userId, Number(page) || 0, viewerId)));
+    return i.update(ui.edit(await render(i.guildId, userId, Number(page) || 0, viewerId)));
   },
 };

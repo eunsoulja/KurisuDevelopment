@@ -20,11 +20,11 @@ module.exports = {
   async execute(i) {
     const err = guard(i, {});
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
+    if (!(await perms.canManageSecurity(i.guild, i.member))) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
     const sub = i.options.getSubcommand();
     if (sub === 'status') {
-      const c = repo.getRaid(i.guild.id);
-      const joins = repo.countJoins(i.guild.id, Date.now() - c.window_sec * 1000);
+      const c = await repo.getRaid(i.guild.id);
+      const joins = await repo.countJoins(i.guild.id, Date.now() - c.window_sec * 1000);
       return i.reply(ui.message([
         `### ${E.modernRaid} RAID PROTECTION`, `Level: **${c.level}**`,
         `Joins (last ${c.window_sec}s): ${joins.c} (${joins.s} new accounts)`,
@@ -34,7 +34,8 @@ module.exports = {
     }
     await i.deferReply({ flags: 64 });
     if (sub === 'lockdown') {
-      const minutes = i.options.getInteger('minutes') ?? repo.getRaid(i.guild.id).lockdown_minutes;
+      const raidCfg = await repo.getRaid(i.guild.id);
+      const minutes = i.options.getInteger('minutes') ?? raidCfg.lockdown_minutes;
       const r = await raid.lockdown(i.guild, minutes, i.user.id);
       return r.ok ? i.editReply(ui.edit([`${E.modernRaid} Lockdown enabled. ${r.locked} channel(s) locked.`])) : fail(i, r.error);
     }

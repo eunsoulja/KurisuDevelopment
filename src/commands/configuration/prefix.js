@@ -20,15 +20,18 @@ module.exports = {
   async execute(i) {
     const err = guard(i, {});
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can change the prefix.');
+    if (!await perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can change the prefix.');
 
     const raw = i.options.getString('prefix');
-    if (raw === null) return i.reply(ui.notice(E.modernRules, `The server prefix is \`${repo.getGuild(i.guild.id).prefix}\`.`, { ephemeral: true }));
+    if (raw === null) {
+      const g = await repo.getGuild(i.guild.id);
+      return i.reply(ui.notice(E.modernRules, `The server prefix is \`${g.prefix}\`.`, { ephemeral: true }));
+    }
 
     const value = raw.trim();
     if (!PREFIX_RE.test(value)) return fail(i, 'Use 1-5 letters, numbers or simple punctuation (no spaces or slashes).');
 
-    repo.setGuild(i.guild.id, 'prefix', value);
+    await repo.setGuild(i.guild.id, 'prefix', value);
     text.clearPrefix(i.guild.id);
     await logging.send(i.guild, 'config', `${E.modernRules} CONFIGURATION CHANGED`, [`Prefix: \`${value}\``, `By: <@${i.user.id}>`]);
     return i.reply(ui.notice(E.modernRules, `Server prefix set to \`${value}\`.`, { ephemeral: true }));

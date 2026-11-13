@@ -113,7 +113,7 @@ function aboutView(id, client) {
 }
 
 /** Resolve /help category:<..> command:<..> to the right first page. */
-function initial(id, entries, { category, command, prefix = '!' }) {
+async function initial(id, entries, { category, command, prefix = '!' }) {
   if (command) {
     const key = command.replace(/^\//, '').trim().replace(/\s+/g, '.');
     const e = entries.find((x) => x.key === key) || entries.find((x) => x.name === key);
@@ -133,7 +133,7 @@ async function autocomplete(i) {
 async function handle(i) {
   const [, owner, action, ...arg] = i.customId.split(':');
   if (i.user.id !== owner) return i.reply(ui.error('This menu belongs to someone else. Run /help to open your own.'));
-  const prefix = i.guild ? text.getPrefix(i.guild.id) : '!';
+  const prefix = i.guild ? await text.getPrefix(i.guild.id) : '!';
   const entries = collect(i.client.commands, prefix);
   const show = (items) => i.update(ui.edit(items));
   try {
@@ -144,8 +144,8 @@ async function handle(i) {
       case 'csel': return show(detailView(owner, entries, i.values[0], arg[0], Number(arg[1]) || 0, prefix));
       case 'about': return show(aboutView(owner, i.client));
       case 'dash':
-        if (!i.guild || !perms.canManageSecurity(i.guild, i.member)) return i.reply(ui.error('Only the server owner, bot owner or a Trusted Administrator can open the security center.'));
-        return show(dashboard.main(i.guild));
+        if (!i.guild || !await perms.canManageSecurity(i.guild, i.member)) return i.reply(ui.error('Only the server owner, bot owner or a Trusted Administrator can open the security center.'));
+        return show(await dashboard.main(i.guild));
       case 'close':
         if (i.message.flags.has(MessageFlags.Ephemeral)) return show(['-# Closed. Run /help to open it again.']);
         await i.message.delete().catch(() => {});
@@ -153,7 +153,6 @@ async function handle(i) {
       default: return show(mainView(owner, prefix));
     }
   } catch (err) {
-    // 10062 / 40060: interaction expired or already acknowledged. Nothing useful left to do.
     if ([10062, 40060, 10008].includes(err.code)) return undefined;
     throw err;
   }

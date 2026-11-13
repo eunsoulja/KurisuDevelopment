@@ -9,11 +9,11 @@ const { clip } = require('../../utils/helpers');
 
 const { E } = ui;
 
-function render(guild, page = 0, viewerId) {
-  const total = repo.countIncidents(guild.id);
+async function render(guild, page = 0, viewerId) {
+  const total = await repo.countIncidents(guild.id);
   const pages = Math.max(1, Math.ceil(total / LIMITS.incidentsPerPage));
   const p = Math.min(Math.max(0, page), pages - 1);
-  const rows = repo.pageIncidents(guild.id, LIMITS.incidentsPerPage, p * LIMITS.incidentsPerPage);
+  const rows = await repo.pageIncidents(guild.id, LIMITS.incidentsPerPage, p * LIMITS.incidentsPerPage);
   const body = rows.length ? rows.map((r) => {
     const who = /^\d+$/.test(r.executor_id) ? `<@${r.executor_id}>` : 'System';
     const meta = [who, r.threshold ? `${r.count}/${r.threshold}` : null, r.response, r.status].filter(Boolean).join('  ·  ');
@@ -44,15 +44,15 @@ module.exports = {
   async execute(i) {
     const err = guard(i, {});
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can view security incidents.');
+    if (!await perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can view security incidents.');
     const page = (i.options.getInteger('page') || 1) - 1;
-    return i.reply(ui.message(render(i.guild, page, i.user.id), { ephemeral: true }));
+    return i.reply(ui.message(await render(i.guild, page, i.user.id), { ephemeral: true }));
   },
   /** customId: kn:<viewerId>:<page> */
   async component(i) {
-    if (!i.guild || !perms.canManageSecurity(i.guild, i.member)) return i.reply(ui.error('You are not authorised to view security incidents.'));
+    if (!i.guild || !await perms.canManageSecurity(i.guild, i.member)) return i.reply(ui.error('You are not authorised to view security incidents.'));
     const [, viewerId, page] = i.customId.split(':');
     if (i.user.id !== viewerId) return i.reply(ui.error('These controls are not yours.'));
-    return i.update(ui.edit(render(i.guild, Number(page) || 0, viewerId)));
+    return i.update(ui.edit(await render(i.guild, Number(page) || 0, viewerId)));
   },
 };

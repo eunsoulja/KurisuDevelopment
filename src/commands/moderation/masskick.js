@@ -21,7 +21,7 @@ module.exports = {
 
     // Mass kicks are destructive. Only staff who are already exempt from the
     // mass kick module may run one, otherwise antinuke would (correctly) fire.
-    if (!perms.isExempt(i.guild, i.user.id, 'general', 'massKick', i.member)) {
+    if (!await perms.isExempt(i.guild, i.user.id, 'general', 'massKick', i.member)) {
       return fail(i, 'Mass kick requires a whitelist exemption for the mass kick module. Ask the owner to whitelist you first.');
     }
 

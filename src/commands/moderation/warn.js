@@ -22,9 +22,9 @@ module.exports = {
     if (bad) return fail(i, bad);
     const reason = i.options.getString('reason', true);
     await i.deferReply();
-    repo.addWarning(i.guild.id, user.id, i.user.id, reason);
+    await repo.addWarning(i.guild.id, user.id, i.user.id, reason);
     const c = await moderation.record(i.guild, { userId: user.id, moderatorId: i.user.id, action: 'warn', reason });
-    const total = repo.countWarnings(i.guild.id, user.id);
+    const total = await repo.countWarnings(i.guild.id, user.id);
     return done(i, E.modernRules, `Warned **${user.username}** (${total} total). Case #${c.case_number}`);
   },
 };

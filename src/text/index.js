@@ -12,10 +12,13 @@ const CHANNEL_MENTION = /^<#(\d{17,20})>$/;
 const RAW_ID = /^\d{17,20}$/;
 const NAMED = /^([a-zA-Z_][\w-]*)(?::|=)([\s\S]*)$/;
 
-// Prefixes change rarely; avoid a SQLite round-trip on every message.
+// Prefixes change rarely; avoid a DB round-trip on every message.
 const prefixCache = new Map();
-function getPrefix(guildId) {
-  if (!prefixCache.has(guildId)) prefixCache.set(guildId, (repo.getGuild(guildId).prefix || '!').trim());
+async function getPrefix(guildId) {
+  if (!prefixCache.has(guildId)) {
+    const g = await repo.getGuild(guildId);
+    prefixCache.set(guildId, (g.prefix || '!').trim());
+  }
   return prefixCache.get(guildId);
 }
 function clearPrefix(guildId) { prefixCache.delete(guildId); }
@@ -448,15 +451,11 @@ function createInteraction(message, client, command, sub, values, member = messa
   return fake;
 }
 
-/**
- * Handle a text command. Returns true when the message was recognised as a
- * prefix command (including usage/error replies), false for ordinary chat.
- */
 async function handle(message, client) {
   if (!message.guild || !message.author || message.author.bot || message.webhookId || message.system) return false;
   if (!message.content) return false;
 
-  const prefix = getPrefix(message.guild.id);
+  const prefix = await getPrefix(message.guild.id);
   if (!prefix) return false;
   if (!message.content.toLowerCase().startsWith(prefix.toLowerCase())) return false;
 

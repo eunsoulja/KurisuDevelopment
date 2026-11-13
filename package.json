@@ -1,6 +1,6 @@
 {
   "name": "kurisu",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Kurisu Security - Discord antinuke, raid protection and moderation bot",
   "main": "index.js",
   "private": true,
@@ -8,11 +8,18 @@
   "scripts": {
     "start": "node index.js",
     "deploy": "node scripts/deploy-commands.js",
-    "test": "node --test tests/kurisu.test.js"
+    "test": "node --test tests/kurisu.test.js",
+    "migrate:mongo": "node scripts/migrate-sqlite-to-mongo.js"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
     "discord.js": "^14.21.0",
-    "dotenv": "^18.0.10"
+    "dotenv": "^18.0.10",
+    "mongodb": "^6.20.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^13.0.3"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.2.3"
   }
 }

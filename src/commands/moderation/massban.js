@@ -21,7 +21,7 @@ module.exports = {
 
     // A mass ban is itself the kind of action antinuke watches. Require the
     // invoker to be exempt so they cannot trip their own protection.
-    if (!perms.isExempt(i.guild, i.user.id, 'general', 'massBan', i.member)) {
+    if (!await perms.isExempt(i.guild, i.user.id, 'general', 'massBan', i.member)) {
       return fail(i, 'Mass ban requires a whitelist exemption for the mass ban module. Ask the owner to whitelist you first.');
     }
 

@@ -23,20 +23,20 @@ module.exports = {
   async execute(i) {
     const err = guard(i, {});
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
+    if (!await perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
     const sub = i.options.getSubcommand();
     if (sub === 'set') {
       const ch = i.options.getChannel('channel', true);
       const full = i.guild.channels.cache.get(ch.id);
       if (!full?.permissionsFor(i.guild.members.me)?.has(['ViewChannel', 'SendMessages'])) return fail(i, 'I cannot send messages in that channel.');
-      repo.setLogChannel(i.guild.id, i.options.getString('type', true), ch.id);
+      await repo.setLogChannel(i.guild.id, i.options.getString('type', true), ch.id);
       return i.reply(ui.notice(E.modernRules, `${LOG_TYPES[i.options.getString('type')]} logs will go to <#${ch.id}>.`, { ephemeral: true }));
     }
     if (sub === 'clear') {
-      repo.setLogChannel(i.guild.id, i.options.getString('type', true), null);
+      await repo.setLogChannel(i.guild.id, i.options.getString('type', true), null);
       return i.reply(ui.notice(E.modernRules, `${LOG_TYPES[i.options.getString('type')]} logs disabled.`, { ephemeral: true }));
     }
-    const chans = repo.allLogChannels(i.guild.id);
+    const chans = await repo.allLogChannels(i.guild.id);
     return i.reply(ui.message([`### ${E.modernRules} LOG CHANNELS`, 'sep', Object.entries(LOG_TYPES).map(([k, l]) => `${l}  ·  ${chans[k] ? `<#${chans[k]}>` : 'not set'}`).join('\n')], { ephemeral: true }));
   },
 };

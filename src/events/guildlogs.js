@@ -5,6 +5,7 @@ const { E } = require('../components/common/ui');
 
 const t = (ms) => `<t:${Math.floor(ms / 1000)}:R>`;
 
+// Log delivery is async (Mongo-backed channel config); handlers await logging.send.
 module.exports = [
   { name: Events.GuildMemberAdd, async execute(m) {
     await logging.send(m.guild, 'member', `${E.redDot} MEMBER JOINED`, [`User: <@${m.id}>`, `Account created: ${t(m.user.createdTimestamp)}`]);

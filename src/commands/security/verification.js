@@ -19,10 +19,10 @@ module.exports = {
   async execute(i) {
     const err = guard(i, { bot: [P.ManageGuild] });
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
+    if (!(await perms.canManageSecurity(i.guild, i.member))) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
     const sub = i.options.getSubcommand();
     if (sub === 'status') {
-      const c = repo.getRaid(i.guild.id);
+      const c = await repo.getRaid(i.guild.id);
       return i.reply(ui.message([`${E.modernVerify} Verification mode is **${c.verification_active ? 'on' : 'off'}**.`], { ephemeral: true }));
     }
     await i.deferReply({ flags: 64 });

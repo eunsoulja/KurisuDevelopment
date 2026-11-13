@@ -18,9 +18,9 @@ module.exports = {
   async execute(i) {
     const err = guard(i, { bot: [P.ManageRoles] });
     if (err) return fail(i, err);
-    if (!perms.canManageSecurity(i.guild, i.member)) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
+    if (!(await perms.canManageSecurity(i.guild, i.member))) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can use this.');
     const user = i.options.getUser('user', true);
-    const saved = repo.getQuarantine(i.guild.id, user.id);
+    const saved = await repo.getQuarantine(i.guild.id, user.id);
     const member = await punish.fetchMember(i.guild, user.id);
     if (!saved || !member) return fail(i, 'That member has no saved quarantine record.');
     await i.deferReply({ flags: 64 });
@@ -33,11 +33,12 @@ module.exports = {
       if ((role.permissions.bitfield & DANGEROUS_BITS) && !ownerClass) withheld.push(role.name); else restore.push(id);
     }
     try {
-      const qRole = repo.getGuild(i.guild.id).quarantine_role_id;
+      const guild = await repo.getGuild(i.guild.id);
+      const qRole = guild?.quarantine_role_id;
       if (qRole && member.roles.cache.has(qRole)) await member.roles.remove(qRole, 'Kurisu: quarantine released');
       if (restore.length) await member.roles.add(restore, 'Kurisu: quarantine released');
       await member.timeout(null, 'Kurisu: quarantine released').catch(() => {});
-      repo.clearQuarantine(i.guild.id, user.id);
+      await repo.clearQuarantine(i.guild.id, user.id);
       await logging.send(i.guild, 'antinuke', `${E.clearShield} QUARANTINE RELEASED`, [`User: <@${user.id}>`, `By: <@${i.user.id}>`, `Roles restored: ${restore.length}`]);
       return done(i, E.clearShield, `Released **${user.username}**. Restored ${restore.length} role(s).${withheld.length ? ` Withheld privileged roles (owner only): ${withheld.join(', ')}.` : ''}`);
     } catch (e) { return fail(i, e.message); }

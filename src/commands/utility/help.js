@@ -14,9 +14,9 @@ module.exports = {
     .addBooleanOption((o) => o.setName('visible').setDescription('Show the help menu to everyone (default: only you)')),
   autocomplete: help.autocomplete,
   async execute(i) {
-    const prefix = i.guild ? text.getPrefix(i.guild.id) : '!';
+    const prefix = i.guild ? await text.getPrefix(i.guild.id) : '!';
     const entries = help.collect(i.client.commands, prefix);
-    const items = help.initial(i.user.id, entries, {
+    const items = await help.initial(i.user.id, entries, {
       category: i.options.getString('category'), command: i.options.getString('command'), prefix,
     });
     return i.reply(ui.message(items, { ephemeral: !i.options.getBoolean('visible') }));
