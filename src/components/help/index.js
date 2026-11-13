@@ -4,6 +4,7 @@ const ui = require('../common/ui');
 const about = require('../common/about');
 const perms = require('../../permissions');
 const dashboard = require('../dashboard');
+const text = require('../../text');
 const { BRANDING_GIF } = require('../../config/branding');
 
 const { E } = ui;
@@ -22,20 +23,24 @@ const CATEGORIES = {
 const TYPE_LABEL = { 3: 'text', 4: 'number', 5: 'true/false', 6: 'member', 7: 'channel', 8: 'role', 10: 'number', 11: 'file' };
 
 /** Builds help entries from the REAL command definitions, so help can never go stale. */
-function collect(commands) {
+function collect(commands, prefix = '!') {
   const out = [];
   for (const cmd of commands.values()) {
     const json = cmd.data.toJSON();
     const subs = (json.options || []).filter((o) => o.type === 1);
     const examples = cmd.examples || {};
-    const make = (name, sub, desc, options) => ({
-      key: sub ? `${name}.${sub}` : name,
-      label: sub ? `/${name} ${sub}` : `/${name}`,
-      name, sub, description: desc, category: cmd.category,
-      permission: cmd.permission || 'None',
-      example: examples[sub || ''] || examples[''] || `/${name}${sub ? ` ${sub}` : ''}`,
-      options: (options || []).map((o) => ({ name: o.name, required: !!o.required, type: TYPE_LABEL[o.type] || 'text', description: o.description })),
-    });
+    const make = (name, sub, desc, options) => {
+      const example = examples[sub || ''] || examples[''] || `/${name}${sub ? ` ${sub}` : ''}`;
+      return {
+        key: sub ? `${name}.${sub}` : name,
+        label: sub ? `/${name} ${sub}` : `/${name}`,
+        name, sub, description: desc, category: cmd.category,
+        permission: cmd.permission || 'None',
+        example,
+        textExample: example.replace(/^\/([a-zA-Z0-9]+)/, `${prefix}$1`),
+        options: (options || []).map((o) => ({ name: o.name, required: !!o.required, type: TYPE_LABEL[o.type] || 'text', description: o.description })),
+      };
+    };
     if (subs.length) for (const s of subs) out.push(make(json.name, s.name, s.description, s.options));
     else out.push(make(json.name, null, json.description, json.options));
   }
@@ -49,11 +54,11 @@ const footer = (id, extra = []) => ui.buttons(...extra, ui.btn(`${uid(id)}:close
 const categorySelect = (id, current) => ui.select(`${uid(id)}:sel`, 'Select a category',
   Object.entries(CATEGORIES).map(([value, c]) => ({ label: c.name, value, description: c.desc, emoji: c.emoji, default: value === current })));
 
-function mainView(id) {
+function mainView(id, prefix = '!') {
   const lines = Object.values(CATEGORIES).map((c) => `${c.emoji} **${c.name}**\n-# ${c.desc}`).join('\n\n');
   return [
     `### ${E.crown} KURISU COMMAND CENTER`,
-    '**Antinuke, Security & Moderation**\n-# Browse commands and manage your server with Kurisu.',
+    `**Antinuke, Security & Moderation**\n-# Browse commands and manage your server with Kurisu.\n-# Text prefix: \`${prefix}\`  ·  Slash commands also work.`,
     { media: BRANDING_GIF },
     'sep',
     `-# COMMAND CATEGORIES\n${lines}`,
@@ -83,7 +88,7 @@ function categoryView(id, entries, cat, page = 0) {
   ];
 }
 
-function detailView(id, entries, key, cat, page) {
+function detailView(id, entries, key, cat, page, prefix = '!') {
   const e = entries.find((x) => x.key === key);
   if (!e) return mainView(id);
   const c = CATEGORIES[e.category];
@@ -96,7 +101,8 @@ function detailView(id, entries, key, cat, page) {
     `-# USAGE\n\`${usage}\``,
     `-# OPTIONS\n${opts}`,
     `-# PERMISSION\n${e.permission}`,
-    `-# EXAMPLE\n\`${e.example}\``,
+    `-# SLASH EXAMPLE\n\`${e.example}\``,
+    `-# TEXT EXAMPLE\n\`${e.textExample || e.example}\``,
     'sep',
     footer(id, [ui.btn(`${uid(id)}:cat:${cat || e.category}:${page || 0}`, 'Back')]),
   ];
@@ -107,14 +113,14 @@ function aboutView(id, client) {
 }
 
 /** Resolve /help category:<..> command:<..> to the right first page. */
-function initial(id, entries, { category, command }) {
+function initial(id, entries, { category, command, prefix = '!' }) {
   if (command) {
     const key = command.replace(/^\//, '').trim().replace(/\s+/g, '.');
     const e = entries.find((x) => x.key === key) || entries.find((x) => x.name === key);
-    if (e) return detailView(id, entries, e.key, e.category, 0);
+    if (e) return detailView(id, entries, e.key, e.category, 0, prefix);
   }
   if (category) return categoryView(id, entries, category, 0);
-  return mainView(id);
+  return mainView(id, prefix);
 }
 
 async function autocomplete(i) {
@@ -127,14 +133,15 @@ async function autocomplete(i) {
 async function handle(i) {
   const [, owner, action, ...arg] = i.customId.split(':');
   if (i.user.id !== owner) return i.reply(ui.error('This menu belongs to someone else. Run /help to open your own.'));
-  const entries = collect(i.client.commands);
+  const prefix = i.guild ? text.getPrefix(i.guild.id) : '!';
+  const entries = collect(i.client.commands, prefix);
   const show = (items) => i.update(ui.edit(items));
   try {
     switch (action) {
-      case 'main': return show(mainView(owner));
+      case 'main': return show(mainView(owner, prefix));
       case 'sel': return show(categoryView(owner, entries, i.values[0], 0));
       case 'cat': return show(categoryView(owner, entries, arg[0], Number(arg[1]) || 0));
-      case 'csel': return show(detailView(owner, entries, i.values[0], arg[0], Number(arg[1]) || 0));
+      case 'csel': return show(detailView(owner, entries, i.values[0], arg[0], Number(arg[1]) || 0, prefix));
       case 'about': return show(aboutView(owner, i.client));
       case 'dash':
         if (!i.guild || !perms.canManageSecurity(i.guild, i.member)) return i.reply(ui.error('Only the server owner, bot owner or a Trusted Administrator can open the security center.'));
@@ -143,7 +150,7 @@ async function handle(i) {
         if (i.message.flags.has(MessageFlags.Ephemeral)) return show(['-# Closed. Run /help to open it again.']);
         await i.message.delete().catch(() => {});
         return undefined;
-      default: return show(mainView(owner));
+      default: return show(mainView(owner, prefix));
     }
   } catch (err) {
     // 10062 / 40060: interaction expired or already acknowledged. Nothing useful left to do.

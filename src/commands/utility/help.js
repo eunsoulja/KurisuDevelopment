@@ -2,6 +2,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const help = require('../../components/help');
 const ui = require('../../components/common/ui');
+const text = require('../../text');
 
 module.exports = {
   category: 'utility', permission: 'None',
@@ -13,8 +14,11 @@ module.exports = {
     .addBooleanOption((o) => o.setName('visible').setDescription('Show the help menu to everyone (default: only you)')),
   autocomplete: help.autocomplete,
   async execute(i) {
-    const entries = help.collect(i.client.commands);
-    const items = help.initial(i.user.id, entries, { category: i.options.getString('category'), command: i.options.getString('command') });
+    const prefix = i.guild ? text.getPrefix(i.guild.id) : '!';
+    const entries = help.collect(i.client.commands, prefix);
+    const items = help.initial(i.user.id, entries, {
+      category: i.options.getString('category'), command: i.options.getString('command'), prefix,
+    });
     return i.reply(ui.message(items, { ephemeral: !i.options.getBoolean('visible') }));
   },
 };

@@ -14,7 +14,7 @@ const windows = new Map();   // `${guild}:${exec}:${module}` -> [{ t, w, entry }
 const seen = new Map();      // audit entry id -> timestamp (dedupe)
 const locks = new Map();     // `${guild}:${exec}` -> expiry; after a breach, more actions are mitigated but not re-punished
 const mitigated = new Set(); // entry ids already reverted
-const recent = new Map();    // `${guild}:${exec}` -> [{ t, key, entry }] for the cross-module Nuke Guard
+const recent = new Map();    // `${guild}:${exec}` -> [{ t, keys, key, entry }] for the cross-module Nuke Guard
 const alerted = new Map();   // `${guild}:${exec}:${module}` -> watch-alert expiry
 const LOCK_MS = 60_000;
 const NUKE_WATCH_MS = 24 * 3600 * 1000;
@@ -31,12 +31,45 @@ function slide(key, windowMs, weight, entry, nowMs = Date.now()) {
   return { total: arr.reduce((a, b) => a + b.w, 0), items: arr };
 }
 
-/** Track destructive actions across modules so mixed nukes cannot stay below every threshold. */
-function trackNuke(guildId, executorId, key, entry, windowMs, nowMs = Date.now()) {
+/**
+ * Track destructive actions across modules so mixed nukes cannot stay below
+ * every threshold. Each entry keeps every matching module key, and the window
+ * is mirrored to SQLite so a burst survives a bot restart.
+ */
+function trackNuke(guildId, executorId, keys, entry, windowMs, nowMs = Date.now()) {
+  const list = Array.isArray(keys) ? keys : [keys];
   const mapKey = rowKey(guildId, executorId);
-  const arr = (recent.get(mapKey) || []).filter((x) => nowMs - x.t <= windowMs && x.entry?.id !== entry?.id);
-  arr.push({ t: nowMs, key, entry });
+  const cutoff = nowMs - windowMs;
+  const byId = new Map();
+
+  // Persisted actions from before a restart. Persistence is a safety net; if
+  // the auxiliary table is unavailable, keep detecting with memory alone.
+  let persisted = [];
+  try { persisted = repo.listNukeRecent(guildId, executorId, cutoff); } catch (err) { log.debug('nuke recent load failed', err); }
+  for (const row of persisted) {
+    let parsed = [];
+    try { parsed = JSON.parse(row.module_keys || '[]'); } catch { /* ignore malformed row */ }
+    if (!Array.isArray(parsed)) parsed = [];
+    byId.set(String(row.entry_id), {
+      t: row.created_at, keys: parsed, key: parsed[0], entry: { id: row.entry_id },
+    });
+  }
+
+  // In-memory actions are newer and keep the full audit entry for mitigation.
+  for (const item of recent.get(mapKey) || []) {
+    if (item.t < cutoff) continue;
+    const id = item.entry?.id != null ? String(item.entry.id) : `${item.t}:${item.key}`;
+    byId.set(id, item);
+  }
+
+  // Re-processing the same audit entry must not double-count it.
+  if (entry?.id != null) byId.delete(String(entry.id));
+  const arr = [...byId.values()].sort((a, b) => a.t - b.t);
+  arr.push({ t: nowMs, keys: list, key: list[0], entry });
   recent.set(mapKey, arr);
+  if (entry?.id != null) {
+    try { repo.addNukeRecent(guildId, executorId, entry.id, list, nowMs); } catch (err) { log.debug('nuke recent save failed', err); }
+  }
   return arr;
 }
 
@@ -49,6 +82,7 @@ function cleanup() {
   for (const [k, v] of alerted) if (v < n) alerted.delete(k);
   if (mitigated.size > 5000) mitigated.clear();
   try { repo.pruneNukeWatch(n); } catch (err) { log.debug('nuke watch cleanup failed', err); }
+  try { repo.pruneNukeRecent(n - 120_000); } catch (err) { log.debug('nuke recent cleanup failed', err); }
 }
 setInterval(cleanup, 60_000).unref();
 
@@ -120,7 +154,7 @@ async function handleAuditEntry(entry, guild) {
         && !perms.isExempt(guild, executorId, MODULES[key].group || 'general', key))
       : [];
     if (activeNuke.length) {
-      const items = trackNuke(guild.id, executorId, activeNuke[0].key, entry, guard.window_sec * 1000);
+      const items = trackNuke(guild.id, executorId, activeNuke.map(({ key }) => key), entry, guard.window_sec * 1000);
       if (items.length >= guard.threshold) {
         await respondNuke(guild, guard, executorId, items);
         return;
@@ -209,9 +243,13 @@ async function respond(guild, key, cfg, executorId, total, entries, lastEntry) {
 async function respondNuke(guild, cfg, executorId, items) {
   const lockKey = rowKey(guild.id, executorId);
   recent.delete(lockKey);
+  try { repo.clearNukeRecent(guild.id, executorId); } catch (err) { log.debug('nuke recent clear failed', err); }
   locks.set(lockKey, Date.now() + LOCK_MS); // block concurrent duplicate responses
 
-  const labels = [...new Set(items.map((i) => MODULES[i.key]?.name || i.key))];
+  const labels = [...new Set(items
+    .flatMap((i) => i.keys || [i.key])
+    .filter(Boolean)
+    .map((key) => MODULES[key]?.name || key))];
   const result = await punish.apply(guild, executorId, cfg.punishment, 'Kurisu nuke guard: destructive burst');
   if (!result.ok) locks.delete(lockKey);
   if (result.ok && result.kind === 'ban') repo.removeNukeWatch(guild.id, executorId);

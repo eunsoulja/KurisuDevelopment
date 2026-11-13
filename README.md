@@ -16,8 +16,8 @@ Red custom emojis are the only colour: no accent bars, grey (secondary) buttons 
 | Command Center | `/help` generated from the real command definitions, category pages, detail pages, pagination, branded media |
 | Logs | antinuke, raid, moderation, member, message, channel, role, voice, configuration |
 | Recovery | channel and role restore, role/channel/server-name revert, webhook removal, unapproved bot removal, invite cleanup |
-| Extra commands | `/raid status\|lockdown\|unlock`, `/verification enable\|disable\|status`, `/quarantine release`, `/logs set\|clear\|view`, `/antinuke status\|enable\|disable`, `/incidents`, `/watchlist list\|add\|remove`, `/guilds` (bot owner), `/prefix`, `/userinfo`, `/about`, `/invite`, `/ping`, `/serverinfo` |
-| Text commands | Per-server prefix (default `!`), e.g. `khelp`, `kping`, `kserverinfo`, `kban @member spam`; same permission checks and V2 views as slash commands |
+| Extra commands | `/raid status\|lockdown\|unlock`, `/verification enable\|disable\|status`, `/quarantine release`, `/logs set\|clear\|view`, `/antinuke status\|enable\|disable`, `/incidents`, `/watchlist list\|add\|remove`, `/guilds` (bot owner, paginated + refresh), `/prefix`, `/userinfo`, `/about`, `/invite`, `/ping`, `/serverinfo` |
+| Text commands | Per-server prefix (default `!`), e.g. `!help`, `!ping`, `!serverinfo`, `!ban @member spam`; same permission checks and V2 views as slash commands |
 | Mention card | Mentioning Kurisu replies with a branded Components V2 card (GIF + live bot stats + emoji invite button); 15s per-user cooldown |
 | Presence | The bot's status is `Watching <n> users`, refreshed every two minutes from the real member count |
 
@@ -47,29 +47,29 @@ Whitelist entries can target a **user or a role** and can be limited to specific
 
 ## Text commands
 
-Slash commands are always available. Kurisu also accepts text commands with the server's prefix (default `!`, change it with `/prefix` or `kprefix`). The prefix is matched case-insensitively and does not need a space:
+Slash commands are always available. Kurisu also accepts text commands with the server's prefix (default `!`, change it with `/prefix` or the text `prefix` command, for example `!prefix` by default). The prefix is matched case-insensitively and does not need a space:
 
 ```text
-khelp
-kping
-kserverinfo
-kban @member spam
-ktimeout @member 10m spam
-kwhitelist add @member trusted_mod pings
+!help
+!ping
+!serverinfo
+!ban @member spam
+!timeout @member 10m spam
+!whitelist add @member trusted_mod pings
 ```
 
-Arguments are typed: mentions, IDs, `#channel`, `@role`, numbers, choices and quoted strings all work. For example, `kban @member reason:"spam and eggs" delete_days:7` is equivalent to `/ban`. Text commands use the same permission, hierarchy and antinuke checks as their slash counterparts, and reply with the same Components V2 views.
+Arguments are typed: mentions, IDs, `#channel`, `@role`, numbers, choices and quoted strings all work. For example, `!ban @member reason:"spam and eggs" delete_days:7` is equivalent to `/ban`. Text commands use the same permission, hierarchy and antinuke checks as their slash counterparts, and reply with the same Components V2 views. The Command Center shows both the slash form and the current prefix form for every command.
 
 ## Requirements
 
-- Node.js 20 or newer (developed on 22)
+- Node.js 22 or newer (matches `package.json`)
 - A Discord application with a bot user
 - The custom emojis from `src/config/emojis.js` must be visible to the bot. Either the bot is in the server that owns them, or you upload them as **Application Emojis** in the Developer Portal. On startup Kurisu validates the registry and logs any emoji it cannot see.
 
 ## Discord Developer Portal setup
 
 1. Create an application, add a bot, copy the token and application ID.
-2. Bot tab, **Privileged Gateway Intents**: enable **Server Members Intent** and **Message Content Intent**. Message Content is required for prefix text commands (`khelp`, `kban`, ...); slash commands work without it.
+2. Bot tab, **Privileged Gateway Intents**: enable **Server Members Intent** and **Message Content Intent**. Message Content is required for prefix text commands (`!help`, `!ban`, ...); slash commands work without it.
 3. Gateway intents requested in code: Guilds, GuildMembers, GuildModeration, GuildMessages, MessageContent, GuildVoiceStates.
 4. Invite with scopes `bot` and `applications.commands`, permissions listed below.
 
@@ -95,14 +95,14 @@ npm start
 | `DISCORD_TOKEN` | bot token (never commit) |
 | `CLIENT_ID` | application ID |
 | `DEV_GUILD_ID` | optional, register commands to one guild |
-| `OWNER_IDS` | comma-separated bot owner user IDs (always exempt, can edit the whitelist) |
+| `OWNER_IDS` | comma-separated bot owner user IDs (always exempt, can edit the whitelist; required for `/guilds`) |
 | `DATABASE_PATH` | SQLite file, default `./data/kurisu.db` |
-| `AUTO_DEPLOY` | `true` to register commands on boot |
+| `AUTO_DEPLOY` | `true` to register commands on boot (default `false`; run `npm run deploy` otherwise) |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error` |
 
 ### Database
 
-SQLite via better-sqlite3 (WAL mode, foreign keys on). Migrations run automatically at startup and are tracked in `schema_migrations`. Back up the `data/` folder. All tables are keyed by `guild_id`. Config, whitelist, warnings, cases, incidents, snapshots and lockdown state survive restarts; an expired lockdown is resolved on the next startup.
+SQLite via better-sqlite3 (WAL mode, foreign keys on). Migrations run automatically at startup and are tracked in `schema_migrations`. Back up the `data/` folder. All tables are keyed by `guild_id`. Config, whitelist, warnings, cases, incidents, snapshots, lockdown state, nuke watch and the recent Nuke Guard burst window survive restarts; an expired lockdown is resolved on the next startup.
 
 ### Deployment
 
@@ -157,9 +157,11 @@ Message-based modules (@everyone, mass mention) run from `messageCreate`; the nu
 
 ```bash
 npm test
+# If PowerShell blocks npm.ps1, run the test file directly:
+node --test tests/kurisu.test.js
 ```
 
-Automated: persistence across a restart, guild isolation, whitelist and hierarchy rules, antinuke thresholds/dedupe/exemptions, fast kick response, nuke-guard bursts and ban-on-sight watch, audit classification, raid levels, help generation from real commands, Components V2 limits, grey-buttons-only, no accent colour, and authorization on dashboard and help interactions.
+Automated: persistence across a restart, guild isolation, whitelist and hierarchy rules, antinuke thresholds/dedupe/exemptions, fast kick response, nuke-guard bursts across a restart and ban-on-sight watch, audit classification, raid levels, help generation from real commands with prefix-aware examples, `/guilds` refresh acknowledgement, compact log settings, Components V2 limits, grey-buttons-only, no accent colour, and authorization on dashboard and help interactions.
 
 **Not automated, run these on a disposable test server before production:** every slash command against live Discord, gateway reconnects, real audit-log delivery, emoji rendering, lockdown/unlock on a server with many channels, channel and role restoration, and bot hierarchy edge cases. Never run destructive tests on a real community.
 
@@ -173,4 +175,4 @@ Automated: persistence across a restart, guild isolation, whitelist and hierarch
 | No incidents appear | Bot lacks View Audit Log, or the module/antinuke is disabled, or the actor is whitelisted. |
 | Punishment failed | Kurisu's role is below the executor's role, or it lacks Ban/Kick/Manage Roles/Moderate Members. |
 | Cannot log to a channel | Grant Kurisu View Channel and Send Messages there. |
-| `better-sqlite3` fails to install | Use Node 20+ and a supported platform, or install build tools (python3, make, g++). |
+| `better-sqlite3` fails to install | Use Node 22+ and a supported platform, or install build tools (python3, make, g++). |

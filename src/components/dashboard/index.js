@@ -162,8 +162,13 @@ function logsView(guild, page = 0) {
 function settings(guild, logType) {
   const g = repo.getGuild(guild.id);
   const chans = repo.allLogChannels(guild.id);
-  const configured = Object.keys(LOG_TYPES).filter((k) => chans[k]).length;
-  const lines = Object.entries(LOG_TYPES).map(([k, label]) => `${chans[k] ? E.redDot : E.smallRedDot} ${label}  ·  ${chans[k] ? `<#${chans[k]}>` : 'Not set'}`).join('\n');
+  const entries = Object.entries(LOG_TYPES);
+  const set = entries.filter(([k]) => chans[k]);
+  const unset = entries.filter(([k]) => !chans[k]).map(([, label]) => label);
+  const lines = set.length
+    ? set.map(([k, label]) => `${E.redDot} ${label}  ·  <#${chans[k]}>`).join('\n')
+    : 'No log channels configured.';
+  const unsetLine = unset.length ? `\n-# Not set: ${unset.join(', ')}` : '';
   const items = [
     `### ${E.modernRules} SETTINGS`,
     '-# Protection, escalation and logging',
@@ -174,7 +179,7 @@ function settings(guild, logType) {
     'sep',
     `**Escalation**  ·  ${g.escalation_threshold ? `ban after **${g.escalation_threshold}** incidents in 24h` : 'off'}\n**Prefix**  ·  **${g.prefix || '!'}**`,
     'sep',
-    `**Log Channels**  ·  ${configured} / ${Object.keys(LOG_TYPES).length} configured\n${lines}`,
+    `**Log Channels**  ·  ${set.length} / ${entries.length} configured\n${lines}${unsetLine}`,
     'sep',
     ui.select('ks:lt', 'Choose a log type', Object.entries(LOG_TYPES).map(([value, label]) => ({ label, value, default: value === logType }))),
   ];

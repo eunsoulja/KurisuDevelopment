@@ -202,6 +202,22 @@ function pruneNukeWatch(nowMs = Date.now()) {
   get().prepare('DELETE FROM nuke_watch WHERE expires_at <= ?').run(nowMs);
 }
 
+// ---------- nuke recent burst ----------
+function addNukeRecent(guildId, executorId, entryId, keys, at = now()) {
+  get().prepare(`INSERT OR REPLACE INTO nuke_recent (guild_id, executor_id, entry_id, module_keys, created_at)
+    VALUES (?, ?, ?, ?, ?)`).run(guildId, executorId, String(entryId), JSON.stringify(keys || []), at);
+}
+function listNukeRecent(guildId, executorId, since) {
+  return get().prepare('SELECT * FROM nuke_recent WHERE guild_id = ? AND executor_id = ? AND created_at >= ? ORDER BY created_at ASC')
+    .all(guildId, executorId, since);
+}
+function clearNukeRecent(guildId, executorId) {
+  get().prepare('DELETE FROM nuke_recent WHERE guild_id = ? AND executor_id = ?').run(guildId, executorId);
+}
+function pruneNukeRecent(before) {
+  get().prepare('DELETE FROM nuke_recent WHERE created_at < ?').run(before);
+}
+
 // ---------- quarantine ----------
 function saveQuarantine(guildId, userId, roles) {
   get().prepare('INSERT OR REPLACE INTO quarantine (guild_id, user_id, roles, created_at) VALUES (?, ?, ?, ?)').run(guildId, userId, JSON.stringify(roles), now());
@@ -220,4 +236,5 @@ module.exports = {
   lastIncident, pageIncidents, countExecutorIncidents, recentIncidentSince, getLogChannel, allLogChannels, setLogChannel,
   saveSnapshot, getSnapshot, listSnapshots, deleteSnapshot, addRecovery, saveQuarantine, getQuarantine, clearQuarantine,
   addNukeWatch, getNukeWatch, listNukeWatch, countNukeWatch, removeNukeWatch, pruneNukeWatch,
+  addNukeRecent, listNukeRecent, clearNukeRecent, pruneNukeRecent,
 };

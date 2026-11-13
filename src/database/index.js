@@ -163,6 +163,21 @@ const MIGRATIONS = [
       CREATE INDEX idx_nuke_watch_expiry ON nuke_watch (guild_id, expires_at);
     `,
   },
+  {
+    version: 5,
+    name: 'nuke recent burst',
+    sql: `
+      CREATE TABLE nuke_recent (
+        guild_id TEXT NOT NULL,
+        executor_id TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        module_keys TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, executor_id, entry_id)
+      );
+      CREATE INDEX idx_nuke_recent_window ON nuke_recent (guild_id, executor_id, created_at);
+    `,
+  },
 ];
 
 let db = null;

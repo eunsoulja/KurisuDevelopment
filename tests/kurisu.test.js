@@ -39,7 +39,7 @@ test('database: migrations are idempotent and config survives a restart', () => 
   assert.equal(m.threshold, 7); assert.equal(m.enabled, 0); assert.equal(m.punishment, 'kick');
   assert.equal(repo.getWhitelist('gA', 'u1').level, 'bypass');
   assert.equal(repo.getRaid('gA').high_joins, 42);
-  assert.equal(new Database(file).prepare('SELECT COUNT(*) c FROM schema_migrations').get().c, 4);
+  assert.equal(new Database(file).prepare('SELECT COUNT(*) c FROM schema_migrations').get().c, 5);
   db.close();
   db.open(':memory:');
 });
@@ -50,6 +50,11 @@ test('database: guild data is isolated', () => {
   assert.equal(repo.addCase('gX', { userId: 'u', moderatorId: 'm', action: 'ban' }).case_number, 1);
   assert.equal(repo.addCase('gY', { userId: 'u', moderatorId: 'm', action: 'ban' }).case_number, 1);
   assert.equal(repo.addCase('gX', { userId: 'u', moderatorId: 'm', action: 'kick' }).case_number, 2);
+  repo.addNukeRecent('gX', 'u', 'e1', ['memberKick'], Date.now());
+  assert.equal(repo.listNukeRecent('gX', 'u', 0).length, 1);
+  assert.equal(repo.listNukeRecent('gY', 'u', 0).length, 0, 'burst state is guild-isolated');
+  repo.clearNukeRecent('gX', 'u');
+  assert.equal(repo.listNukeRecent('gX', 'u', 0).length, 0);
 });
 
 test('emoji registry: every entry has exact <:name:id> syntax', () => {
@@ -199,6 +204,23 @@ test('antinuke: nuke guard kicks a mixed burst and bans on rejoin', async () => 
   assert.equal(await antinuke.handleJoin(rejoined), true);
   assert.ok(banned.includes('nuker'), 'watched executor is banned on rejoin');
   assert.equal(repo.getNukeWatch('gnuke', 'nuker'), null);
+});
+
+test('antinuke: nuke guard burst survives an in-memory restart', async () => {
+  const { guild, kicked, addMember } = fakeGuild({ id: 'gnuke2' });
+  addMember('nuker2', { position: 3 });
+  repo.ensureGuild('gnuke2');
+
+  await antinuke.handleAuditEntry(entry('p1', AuditLogEvent.MemberKick, 'nuker2'), guild);
+  await antinuke.handleAuditEntry(entry('p2', AuditLogEvent.MemberBanAdd, 'nuker2'), guild);
+  assert.equal(kicked.length, 0, 'two actions stay below the guard');
+
+  antinuke._state.recent.clear(); // simulate a process restart losing memory
+  await antinuke.handleAuditEntry(entry('p3', AuditLogEvent.MemberBanRemove, 'nuker2'), guild);
+
+  assert.deepEqual(kicked, ['nuker2'], 'persisted burst still reaches the guard threshold');
+  assert.equal(repo.lastIncident('gnuke2').count, 3);
+  assert.equal(repo.listNukeRecent('gnuke2', 'nuker2', 0).length, 0, 'burst state clears after response');
 });
 
 test('antinuke: sliding window drops old actions', () => {
@@ -401,10 +423,29 @@ test('guilds: owner-only network overview with totals and per-server counts', as
   assert.match(text, /Alpha/);
   assert.match(text, /1,200 members/);
 
+  assert.match(JSON.stringify(cmd.render({ at: Date.now(), rows, totals: { servers: 2, members: 1500, active: 92 } }, 0, 'botowner')), /kg:botowner:r:0/);
+
   const denied = fakeInteraction({ customId: 'guilds', user: { id: 'rando' } });
   await cmd.execute(denied);
   assert.ok(denied.calls.replied);
   assert.ok(JSON.stringify(denied.calls.replied).includes('Only the bot owner'));
+});
+
+test('guilds: component acknowledges before refreshing and keeps its page', async () => {
+  const cmd = commands.get('guilds');
+  const calls = { deferred: false, edited: null };
+  const interaction = {
+    customId: 'kg:botowner:r:0',
+    user: { id: 'botowner' },
+    client: { guilds: { cache: new Map() } },
+    deferUpdate: async () => { calls.deferred = true; },
+    editReply: async (payload) => { calls.edited = payload; },
+    reply: async (payload) => { calls.edited = payload; },
+  };
+  await cmd.component(interaction);
+  assert.equal(calls.deferred, true, 'component ACK happens before the network fetch');
+  assert.match(JSON.stringify(calls.edited), /KURISU NETWORK/);
+  assert.match(JSON.stringify(calls.edited), /kg:botowner:r:0/);
 });
 
 test('help: generated from real command definitions, covers every command', () => {
@@ -417,6 +458,12 @@ test('help: generated from real command definitions, covers every command', () =
   for (const e of entries) assert.ok(help.CATEGORIES[e.category], `${e.key} has unknown category ${e.category}`);
   const ban = entries.find((e) => e.key === 'ban');
   assert.match(help.detailView('1', entries, 'ban', 'moderation', 0).join('\n'), /USAGE[\s\S]*\/ban user:<member> reason:<text>/);
+
+  const custom = help.collect(commands, '?');
+  const customBan = custom.find((e) => e.key === 'ban');
+  assert.equal(customBan.textExample, '?ban user:@member reason:Spam');
+  assert.match(help.detailView('1', custom, 'ban', 'moderation', 0, '?').join('\n'), /TEXT EXAMPLE[\s\S]*\?ban/);
+  assert.match(help.mainView('1', '?').join('\n'), /Text prefix: `\?`/);
 });
 
 test('UI: Components V2, grey buttons only, no accent colour, valid payloads', () => {
@@ -484,6 +531,17 @@ test('antinuke: status view is grouped into clean sections', () => {
   assert.match(text, /\*\*Nuke Guard\*\*/);
   assert.match(text, /\*\*Nuke Watch\*\*/);
   assert.match(text, /\*\*Incidents \(24h\)\*\*/);
+});
+
+test('dashboard: settings lists only configured log channels and names the rest', () => {
+  const g = { id: 'gset', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
+  repo.ensureGuild('gset');
+  repo.setLogChannel('gset', 'antinuke', 'c1');
+  const view = dashboard.settings(g).filter((x) => typeof x === 'string').join('\n');
+  assert.match(view, /Log Channels\*\*\s+·\s+1 \/ 9 configured/);
+  assert.match(view, /Antinuke\s+·\s+<#c1>/);
+  assert.match(view, /Not set: Raid/);
+  repo.setLogChannel('gset', 'antinuke', null);
 });
 
 test('authorization: dashboard rejects unauthorised users on every interaction type', async () => {

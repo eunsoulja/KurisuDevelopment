@@ -75,6 +75,12 @@ function render(snap, page = 0, viewerId = '') {
   const list = slice.map((g) =>
     `${E.redDot} **${clip(g.name, 80)}**\n-# ${num(g.members)} members  ·  ${g.active === null ? '—' : num(g.active)} active  ·  \`${g.id}\``);
 
+  const nav = pages > 1 ? [
+    ui.btn(`kg:${viewerId}:${p - 1}`, 'Previous', { disabled: p === 0 }),
+    ui.btn(`kg:${viewerId}:${p + 1}`, 'Next', { disabled: p >= pages - 1 }),
+    ui.btn(`kg:${viewerId}:r:${p}`, 'Refresh'),
+  ] : [ui.btn(`kg:${viewerId}:r:${p}`, 'Refresh')];
+
   return [
     `### ${E.shinyVerified} KURISU NETWORK`,
     `-# Every server the bot is in  ·  updated <t:${Math.floor(snap.at / 1000)}:R>`,
@@ -82,10 +88,8 @@ function render(snap, page = 0, viewerId = '') {
     `${E.clearShield} Servers  **${num(totals.servers)}**\n${E.redDot} Active Users  **${num(totals.active)}**\n${E.modernStaff} Total Members  **${num(totals.members)}**`,
     'sep',
     ...(list.length ? list : ['No servers.']),
-    ...(pages > 1 ? ['sep', ui.buttons(
-      ui.btn(`kg:${viewerId}:${p - 1}`, 'Previous', { disabled: p === 0 }),
-      ui.btn(`kg:${viewerId}:${p + 1}`, 'Next', { disabled: p >= pages - 1 }),
-    )] : []),
+    'sep',
+    ui.buttons(...nav),
     `-# Page ${p + 1}/${pages}  ·  Discord approximate online count`,
   ];
 }
@@ -108,16 +112,23 @@ module.exports = {
       return i.editReply(ui.edit([`${E.redDot} ${describeError(err)}`]));
     }
   },
-  /** customId: kg:<viewerId>:<page> */
+  /** customId: kg:<viewerId>:<page> or kg:<viewerId>:r:<page> for refresh */
   async component(i) {
     if (!perms.isBotOwner(i.user.id)) return i.reply(ui.error('Only the bot owner can use this command.'));
-    const [, viewerId, page] = i.customId.split(':');
+    const [, viewerId, action, arg] = i.customId.split(':');
     if (i.user.id !== viewerId) return i.reply(ui.error('These controls are not yours.'));
+
+    const force = action === 'r';
+    const page = force ? (Number(arg) || 0) : (Number(action) || 0);
+
+    // Fetching every guild with counts can exceed the 3-second component ACK
+    // window on large networks. Acknowledge first, then refresh the message.
+    try { await i.deferUpdate(); } catch { return; }
     try {
-      const snap = await snapshot(i.client);
-      return i.update(ui.edit(render(snap, Number(page) || 0, viewerId)));
+      const snap = await snapshot(i.client, { force });
+      return i.editReply(ui.edit(render(snap, page, viewerId)));
     } catch (err) {
-      return i.reply(ui.error(describeError(err)));
+      return i.editReply(ui.edit([`${E.redDot} ${describeError(err)}`]));
     }
   },
 };

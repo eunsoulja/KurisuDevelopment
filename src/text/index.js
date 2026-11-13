@@ -22,9 +22,9 @@ function clearPrefix(guildId) { prefixCache.delete(guildId); }
 
 /**
  * Split a line into arguments. Quotes are removed, so both
- *   kban @user reason:"spam and eggs"
+ *   !ban @user reason:"spam and eggs"
  * and
- *   kban @user "spam and eggs"
+ *   !ban @user "spam and eggs"
  * keep the reason together.
  */
 function tokenize(input) {
@@ -284,7 +284,7 @@ async function assignToken(token, defs, values, message) {
   }
 
   // Required user/role/channel options accept a plain name too, e.g.
-  // "kban user spam" or "klogs set antinuke security-logs". Optional options
+  // "!ban user spam" or "!logs set antinuke security-logs". Optional options
   // still need a mention/ID so free text is not mistaken for a member name.
   const requiredUser = open.find((o) => (o.type === T.User || o.type === T.Mentionable) && o.required);
   if (requiredUser) {
@@ -303,7 +303,7 @@ async function assignToken(token, defs, values, message) {
   }
 
   // A non-choice string option is the natural target for free text. Skipping
-  // choice options here is what makes "khelp ban" target `command` instead of
+  // choice options here is what makes "!help ban" target `command` instead of
   // the `category` choice.
   const stringOpts = open.filter((o) => o.type === T.String);
   const stringOpt = stringOpts.find((o) => !Array.isArray(o.choices)) || stringOpts[0];
